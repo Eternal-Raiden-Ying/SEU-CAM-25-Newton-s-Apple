@@ -20,4 +20,15 @@ def record_signal(t, filename, pth=project_record_dir, fs=default_fs,*, channel=
     sd.wait()
     rx = rx.flatten()
 
-    np.save(os.path.join(pth,filename))
+    np.save(os.path.join(pth,filename),rx)
+
+
+def record_signal_with_error(t, actual_fs, filename, pth=project_record_dir, fs=default_fs,*, channel=1,dtype='float64'):
+    if not os.path.exists(pth):
+        os.makedirs(pth)
+    logging.info(f"record signal for {t}s, result in f{os.path.join(pth,filename)}")
+    rx = sd.rec(t*fs, samplerate=actual_fs, channels=1, dtype=dtype)
+    sd.wait()
+    rx = rx.flatten()
+
+    np.save(os.path.join(pth,filename),rx)

@@ -46,13 +46,16 @@ def draw_in_FD(freq, signal: np.ndarray,*,
                y_label: str = "",
                half: bool = True,
                mode: str = 'Amplitude',
-               ignore_zero: bool = True):
+               ignore_zero: bool = True,
+               eps: float = 1e-12):
 
+    freq_shift = False
     if isinstance(freq, int) or isinstance(freq, float):
+        freq_shift = True
         if half:
-            x = np.linspace(0, freq/2, signal.size)
+            x = np.linspace(0, freq/2, signal.size//2)
         else:
-            x = np.linspace(0, freq, signal.size)
+            x = np.linspace(-freq/2, freq/2, signal.size)
     elif isinstance(freq, np.ndarray):
         x = freq
     else:
@@ -60,15 +63,24 @@ def draw_in_FD(freq, signal: np.ndarray,*,
 
     if mode == 'Amplitude':
         mag = np.abs(fft(signal)).flatten()
-        if ignore_zero:
-            mask = np.where(mag > 0)
-            mag = mag[mask]
-            x = x[mask]
-        y = 20 * np.log10(np.where(mag == 0, 1e-12, mag))
+        y = 20 * np.log10(np.where(mag == 0, eps, mag))
     elif mode == 'Phase':
         y = np.angle(fft(signal)).flatten()
     else:
         raise ValueError(f"valid mode in ['Amplitude', 'Phase'], got {mode} yet")
+
+    if freq_shift:
+        neg_freq = y[y.size//2:]
+        pos_freq = y[:y.size//2]
+        if half:
+            y = pos_freq
+        else:
+            y = np.concatenate([neg_freq, pos_freq])
+
+    if mode == "Amplitude" and ignore_zero:
+        mask = np.where(y > 20 * np.log10(eps))
+        x = x[mask]
+        y = y[mask]
 
     if ax is None:
         plt.plot(x, y)
@@ -85,7 +97,9 @@ def draw_in_FD(freq, signal: np.ndarray,*,
         ax.grid(True)
 
 
-def draw_constellation_map(received, emit_pilot, mode='QPSK', *, pth=None, filename=None):
+def draw_constellation_map(received, emit_pilot, mode='QPSK',
+                           title='constellation_map',*,
+                           ax=None,pth=None, filename=None):
     """
 
     :param received: received signal in freq domain, without the conjugate part
@@ -94,8 +108,8 @@ def draw_constellation_map(received, emit_pilot, mode='QPSK', *, pth=None, filen
     :param filename:
     :return:
     """
-    constellation_emit = emit_pilot
-    constellations = received
+    constellation_emit = emit_pilot.flatten()
+    constellation = received.flatten()
 
     if mode == 'QPSK':
         red_mask = np.where(constellation_emit == 1 + 1j)
@@ -103,29 +117,31 @@ def draw_constellation_map(received, emit_pilot, mode='QPSK', *, pth=None, filen
         blue_mask = np.where(constellation_emit == -1 - 1j)
         yellow_mask = np.where(constellation_emit == 1 - 1j)
 
-        block_num = constellations.shape[0]
-        fig, axes = plt.subplots(1, block_num, figsize=(5 * block_num, 5))
-        for index, constellation in enumerate(constellations):
-            real = np.real(constellation)
-            imag = np.imag(constellation)
-            groups = {
-                'RED': {'real': real[red_mask], 'imag': imag[red_mask], 'color': 'red', 'label': '1+j'},
-                'GREEN': {'real': real[green_mask], 'imag': imag[green_mask], 'color': 'green', 'label': '-1+j'},
-                'BLUE': {'real': real[blue_mask], 'imag': imag[blue_mask], 'color': 'blue', 'label': '-1-j'},
-                'YELLOW': {'real': real[yellow_mask], 'imag': imag[yellow_mask], 'color': 'yellow', 'label': '1-j'}
-            }
-            ax = axes[index]
-            ax.set_xlim(-10, 10)
-            ax.set_ylim(-10, 10)
-            ax.set_title(f'constellation_{index + 1}')
+        real = np.real(constellation)
+        imag = np.imag(constellation)
+        groups = {
+            'RED': {'real': real[red_mask], 'imag': imag[red_mask], 'color': 'red', 'label': '1+j'},
+            'GREEN': {'real': real[green_mask], 'imag': imag[green_mask], 'color': 'green', 'label': '-1+j'},
+            'BLUE': {'real': real[blue_mask], 'imag': imag[blue_mask], 'color': 'blue', 'label': '-1-j'},
+            'YELLOW': {'real': real[yellow_mask], 'imag': imag[yellow_mask], 'color': 'yellow', 'label': '1-j'}
+        }
+        if ax:
+            ax.set_xlim(-5, 5)
+            ax.set_ylim(-5, 5)
+            ax.set_title(title)
             for k, data in groups.items():
                 ax.scatter(data['real'], data['imag'], c=data['color'], label=data['label'], alpha=0.6, s=1)
             ax.grid(True)
+        else:
+            plt.title(title)
+            for k, data in groups.items():
+                plt.scatter(data['real'], data['imag'], c=data['color'], label=data['label'], alpha=0.6, s=1)
+            plt.grid()
+            plt.xlim(-5,5)
+            plt.ylim(-5,5)
 
-        fig.tight_layout()
         if filename:
             plt.savefig(os.path.join(pth, filename), dpi=300) if pth else plt.savefig(filename, dpi=300)
-        plt.show()
 
     else:
         raise ValueError("Unsupported mode, mode should be in ['QPSK',]")

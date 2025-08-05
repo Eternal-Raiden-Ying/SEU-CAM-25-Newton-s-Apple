@@ -6,6 +6,7 @@ import sounddevice as sd
 # TODO: func:
 #       constellation reflection (more than QPSK)
 #       X_f_est approximation / calibration
+#       check the func get bytes
 
 def get_symbols(record:np.ndarray, cp_len, N, **kwargs) -> np.ndarray:
     assert record.ndim == 1, f"Unexpected dimension of record, with shape{record.shape}"
