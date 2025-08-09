@@ -56,7 +56,7 @@ def simple_approximate(data: np.ndarray):
     approximate[real < 0] -= 1
     approximate[imag > 0] += 1j
     approximate[imag <= 0] -= 1j
-    return approximate
+    return approximate / np.sqrt(2)
 
 
 def non_approximate(data: np.ndarray):
@@ -66,15 +66,15 @@ def QPSK_reflection(data: np.ndarray, *, clockwise:bool = False, judge_radius = 
     data_dim = data.ndim
     res = np.stack([np.zeros_like(data), np.zeros_like(data)], axis=data_dim)
     if clockwise:
-        res[np.where(np.abs(data-(1+1j)) < judge_radius)] = [0,0]
-        res[np.where(np.abs(data-(-1+1j)) < judge_radius)] = [1,0]
-        res[np.where(np.abs(data-(-1-1j)) < judge_radius)] = [1,1]
-        res[np.where(np.abs(data-(1-1j)) < judge_radius)] = [0,1]
+        res[np.where(np.abs(data-(1+1j)/np.sqrt(2)) < judge_radius)] = [0,0]
+        res[np.where(np.abs(data-(-1+1j)/np.sqrt(2)) < judge_radius)] = [1,0]
+        res[np.where(np.abs(data-(-1-1j)/np.sqrt(2)) < judge_radius)] = [1,1]
+        res[np.where(np.abs(data-(1-1j)/np.sqrt(2)) < judge_radius)] = [0,1]
     else:
-        res[np.where(np.abs(data-(1+1j)) < judge_radius)] = [0,0]
-        res[np.where(np.abs(data-(-1+1j)) < judge_radius)] = [0,1]
-        res[np.where(np.abs(data-(-1-1j)) < judge_radius)] = [1,1]
-        res[np.where(np.abs(data-(1-1j)) < judge_radius)] = [1,0]
+        res[np.where(np.abs(data-(1+1j)/np.sqrt(2)) < judge_radius)] = [0,0]
+        res[np.where(np.abs(data-(-1+1j)/np.sqrt(2)) < judge_radius)] = [0,1]
+        res[np.where(np.abs(data-(-1-1j)/np.sqrt(2)) < judge_radius)] = [1,1]
+        res[np.where(np.abs(data-(1-1j)/np.sqrt(2)) < judge_radius)] = [1,0]
 
     res = np.real(res)
     res = res.astype(int)

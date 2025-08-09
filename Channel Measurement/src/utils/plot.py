@@ -4,6 +4,7 @@ import numpy as np
 from numpy.fft import fft, ifft, fftfreq
 from matplotlib.axes import Axes
 from matplotlib.font_manager import FontProperties
+from .modulate import normalize
 
 # 设置字体对象
 ch_font = FontProperties(fname='/System/Library/Fonts/STHeiti Medium.ttc')   # 中文（Mac 示例）
@@ -108,14 +109,15 @@ def draw_constellation_map(received, emit_pilot, mode='QPSK',
     :param filename:
     :return:
     """
-    constellation_emit = emit_pilot.flatten()
+    constellation_emit = normalize(emit_pilot).flatten()
     constellation = received.flatten()
+    judge_radius = 0.1
 
     if mode == 'QPSK':
-        red_mask = np.where(constellation_emit == 1 + 1j)
-        green_mask = np.where(constellation_emit == -1 + 1j)
-        blue_mask = np.where(constellation_emit == -1 - 1j)
-        yellow_mask = np.where(constellation_emit == 1 - 1j)
+        red_mask = np.where(np.abs(constellation_emit-(1+1j)/np.sqrt(2)) < judge_radius)
+        green_mask = np.where(np.abs(constellation_emit-(-1+1j)/np.sqrt(2)) < judge_radius)
+        blue_mask = np.where(np.abs(constellation_emit-(-1-1j)/np.sqrt(2)) < judge_radius)
+        yellow_mask = np.where(np.abs(constellation_emit-(1-1j)/np.sqrt(2)) < judge_radius)
 
         real = np.real(constellation)
         imag = np.imag(constellation)

@@ -9,7 +9,7 @@ logging.basicConfig(level=logging.INFO,
                     filemode='w')
 
 
-def decode_bytes(byte_data, pth):
+def decode_bytes(byte_data, pth,*,project_pth):
     # ---------- 文件头解析 ----------
     all_bytes = byte_data.tobytes()
     parts = all_bytes.split(b'\x00')
