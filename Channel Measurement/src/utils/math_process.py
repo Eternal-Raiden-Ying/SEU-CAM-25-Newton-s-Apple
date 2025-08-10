@@ -40,7 +40,7 @@ def phase_unwrap(data:np.ndarray, estimate_start=0, estimate_percent=0.1,*,
     coeffs = np.polyfit(x[estimate_start:estimate_start+estimate_len], estimate_part, deg=1)
     slope, intercept = coeffs
     fit_line = slope * x + intercept
-    unwrap_refined = data + 2 * np.pi * np.round((fit_line - data) / (2 * np.pi))
+    unwrap_refined = y + 2 * np.pi * np.round((fit_line - y) / (2 * np.pi))
     return x, unwrap_refined
 
 def fitting_line(x, y,*, filter=True, residual_th=2):

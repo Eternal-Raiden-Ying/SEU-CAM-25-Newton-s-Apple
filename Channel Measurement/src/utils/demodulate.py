@@ -96,7 +96,7 @@ def QPSK_reflection(data: np.ndarray, *, clockwise:bool = False, judge_radius=0.
     :return:
     """
     data_dim = data.ndim
-    res = np.stack([np.zeros_like(data), np.zeros_like(data)], axis=data_dim)
+    res = np.stack([np.ones_like(data), np.ones_like(data)], axis=data_dim) * (-1)
     if clockwise:
         res[np.where(np.abs(data-(1+1j)/np.sqrt(2)) < judge_radius)] = [0,0]
         res[np.where(np.abs(data-(-1+1j)/np.sqrt(2)) < judge_radius)] = [1,0]
@@ -127,7 +127,7 @@ def get_bytes(binary_data: np.ndarray, bitorder='big'):
     if binary_data.size > bits.size:
         print(f"{binary_data.size - bits.size} bits were dropped, see details at get_bytes()")
     try:
-        res = np.packbits(bits, axis=-1, bitorder=bitorder)
+        res = np.packbits(bits, axis=0, bitorder=bitorder)
         return res
     except:
         print("Error occurred when get_bytes is invoked, make sure the given data is binary")

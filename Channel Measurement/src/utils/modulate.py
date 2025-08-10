@@ -2,6 +2,17 @@ import numpy as np
 import sounddevice as sd
 import os
 from scipy.signal import chirp
+def normalize(data: np.ndarray,*, axis=-1, keepdim=False):
+    """
+        normalize given data
+    :param data:
+    :return:
+    """
+    if data.ndim == 1:
+        max_val = np.max(np.abs(data))
+    else:
+        max_val = np.max(np.abs(data), axis=axis, keepdims=keepdim)
+    return data / max_val
 
 
 def generate_chirp(fs, duration, f_l, f_h,*, method='linear'):
@@ -194,7 +205,7 @@ def get_bits_from_str(s: str):
 
 def random_bits(n: int):
     """
-    return a random generated binary ndarray with size n
+        return a random generated binary ndarray with size n
     :param n:
     :return:
     """
@@ -225,6 +236,76 @@ def save_pilot(constellations: np.ndarray, N: int, pth, filename):
     np.save(os.path.join(pth, filename), pilots)
 
 
+def contrast():
+    # 录音播放部分
+    import numpy as np
+    import sounddevice as sd
+    from scipy.io.wavfile import write
+    from scipy.signal import chirp
+    import matplotlib.pyplot as plt
+    import numpy as np
+    import sounddevice as sd
+    from scipy.io.wavfile import write
+    from scipy.signal import chirp
+    import matplotlib.pyplot as plt
+    import os
+
+    # Generate a linear chirp signal
+    def generate_chirp(fs, duration=2, f0=10, f1=24000):
+        t = np.linspace(0, duration, int(fs * duration))
+        chirp_sig = chirp(t, f0=f0, f1=f1, t1=duration, method='linear')
+        return chirp_sig
+
+    # Parameters
+    fs = 48000
+    N = 4096
+    cp_len = 2000
+    num_symbols = 16
+
+    # Generate pilot symbol (e.g., using BPSK or QPSK)
+    def generate_pilot_symbol(N):
+        half = N // 2
+
+        real_parts = np.random.choice([-1, 1], size=half - 1)
+        imag_parts = np.random.choice([-1, 1], size=half - 1)
+        X_half = (real_parts + 1j * imag_parts) / np.sqrt(2)
+
+        X_freq = np.zeros(N, dtype=complex)
+        X_freq[0] = 1                                                                                # DC component
+        X_freq[1:half] = X_half
+        X_freq[half] = 1                                                                    # Nyquist frequency (real)
+        X_freq[half + 1:] = np.conj(X_half[::-1])        # Hermitian symmetry
+        return X_freq
+
+    # Perform OFDM modulation with IFFT and cyclic prefix
+    def ofdm_modulate(symbol_freq):
+        time_signal = np.fft.ifft(symbol_freq)
+        return np.concatenate([time_signal[-cp_len:], time_signal])
+
+    # Generate the chirp signal for prefix
+    chirp_sig = generate_chirp(fs)
+    chirp_tail = generate_chirp(fs, f0=20, f1=24000)
+
+    tx_signal = np.array([])
+
+    pilots = []
+    for _ in range(num_symbols):
+        pilot = generate_pilot_symbol(N)
+        pilots.append(pilot[1:N//2])
+        ofdm_time = ofdm_modulate(pilot)
+        tx_signal = np.concatenate([tx_signal, ofdm_time])
+
+    my_tx = OFDM_modulate(constellations=np.array(pilots),N=N, cp_len=cp_len)
+                   
+
+    # Convert to real signal and normalize
+    tx_signal_real = np.real(tx_signal)
+
+    tx_signal_real /= np.max(np.abs(tx_signal_real))
+    my_tx = normalize(my_tx.flatten())
+    tx_signal_real = np.concatenate([chirp_sig, tx_signal_real])
+    return tx_signal_real
+
 
 if __name__ == "__main__":
     # unit test
@@ -240,9 +321,12 @@ if __name__ == "__main__":
     bits = get_bits_from_file(os.path.join(data_dir, 'test.txt'))
     bits_parallel = serial_to_parallel(bits, N=N)
     constellations = QPSK_mapping(bits_parallel)
-    save_pilot(constellations,N,data_dir,'test.npy')
+    # save_pilot(constellations,N,data_dir,'test.npy')
     signals = OFDM_modulate(constellations,N=N,cp_len=cp_len)
-    print(bits.shape)
-    print(bits_parallel.shape)
-    print(constellations.shape)
-    print(signals.shape)
+    # print(bits.shape)
+    # print(bits_parallel.shape)
+    # print(constellations.shape)
+    # print(signals.shape)
+    print(random_bits(10))
+
+    contrast()

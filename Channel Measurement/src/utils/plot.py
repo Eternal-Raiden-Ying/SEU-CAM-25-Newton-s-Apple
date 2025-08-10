@@ -124,7 +124,8 @@ def draw_in_FD(freq, signal: np.ndarray,*,
 
 def draw_constellation_map(received, emit_pilot, mode='QPSK',
                            title='constellation_map',*,
-                           ax=None,pth=None, filename=None):
+                           ax=None,pth=None, filename=None,
+                           limit_border=5):
     """
 
     :param received: received signal in freq domain, without the conjugate part
@@ -154,8 +155,8 @@ def draw_constellation_map(received, emit_pilot, mode='QPSK',
             'YELLOW': {'real': real[yellow_mask], 'imag': imag[yellow_mask], 'color': 'yellow', 'label': '1-j'}
         }
         if ax:
-            ax.set_xlim(-5, 5)
-            ax.set_ylim(-5, 5)
+            ax.set_xlim(-limit_border, limit_border)
+            ax.set_ylim(-limit_border, limit_border)
             ax.set_title(title)
             for k, data in groups.items():
                 ax.scatter(data['real'], data['imag'], c=data['color'], label=data['label'], alpha=0.6, s=1)
@@ -165,8 +166,8 @@ def draw_constellation_map(received, emit_pilot, mode='QPSK',
             for k, data in groups.items():
                 plt.scatter(data['real'], data['imag'], c=data['color'], label=data['label'], alpha=0.6, s=1)
             plt.grid()
-            plt.xlim(-5,5)
-            plt.ylim(-5,5)
+            plt.xlim(-limit_border,limit_border)
+            plt.ylim(-limit_border,limit_border)
 
         if filename:
             plt.savefig(os.path.join(pth, filename), dpi=300) if pth else plt.savefig(filename, dpi=300)

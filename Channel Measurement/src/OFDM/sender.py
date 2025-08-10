@@ -13,20 +13,19 @@ from utils import (generate_chirp, QPSK_mapping, OFDM_modulate, normalize,
                    get_bits_from_file, serial_to_parallel, get_bits_from_str,
                    random_bits, save_pilot)
 
-# 参数设置
-fs = 48000  # 采样率
-N = 4096    # OFDM 子载波数
-cp_len = 128  # 循环前缀长度
-
-chirp_len = 1
-chirp_fl = 10
-chirp_fh = 24000
-
 
 if __name__ == "__main__":
+    fs = 48000          # sampling rate
+    N = 4096            # OFDM num of sub carrier waves
+    cp_len = 128        # length of cyclic prefix
+
+    chirp_len = 1
+    chirp_fl = 10
+    chirp_fh = 24000
+
     #txt_path = r"D:\Documents\Coding\Python\SEUCAM\Channel Measurement\data\shakespace(short).txt"
     #bits = get_bits_from_file(txt_path)
-    bits = random_bits(16*2047)
+    bits = random_bits(16*2047*2)
     bits_parallel = serial_to_parallel(bits, N=N)
     constellations = QPSK_mapping(bits_parallel)
     symbols = OFDM_modulate(constellations=constellations,
