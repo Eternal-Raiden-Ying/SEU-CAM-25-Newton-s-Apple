@@ -15,7 +15,7 @@ from utils import decode_bytes
 from utils import phase_unwrap
 from utils import generate_chirp
 
-output_dir = r"D:\Documents\Coding\Python\SEUCAM\Channel Measurement\output\OFDM"
+output_dir = r"D:\Pycharm\SEU-CAM-25-Newton-s-Apple\Channel Measurement\save"
 
 
 def analysis():

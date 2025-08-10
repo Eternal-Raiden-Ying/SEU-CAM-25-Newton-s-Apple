@@ -5,11 +5,7 @@ import logging
 
 project_record_dir = r"D:\Documents\Coding\Python\SEUCAM\Channel Measurement\record"
 default_fs = 48000
-logging.basicConfig(level=logging.INFO,
-                    format='%(asctime)s %(filename)s %(levelname)s %(message)s',
-                    datefmt='%a %d %b %Y %H:%M:%S',
-                    filename=r'D:\Documents\Coding\Python\SEUCAM\Channel Measurement\logging\record.log',
-                    filemode='w')
+
 
 
 def record_signal(t, filename, pth=project_record_dir, fs=default_fs,*, channel=1,dtype='float64'):

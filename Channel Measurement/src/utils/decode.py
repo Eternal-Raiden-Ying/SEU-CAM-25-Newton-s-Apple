@@ -2,11 +2,6 @@ import os
 import numpy as np
 import logging
 
-logging.basicConfig(level=logging.INFO,
-                    format='%(asctime)s %(filename)s %(levelname)s %(message)s',
-                    datefmt='%a %d %b %Y %H:%M:%S',
-                    filename=r'D:\Documents\Coding\Python\SEUCAM\Channel Measurement\logging\decode.log',
-                    filemode='w')
 
 
 def decode_bytes(byte_data, pth):

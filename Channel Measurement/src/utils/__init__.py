@@ -4,3 +4,4 @@ from .demodulate import *
 from .decode import decode_bytes
 from .math_process import phase_unwrap, smooth_H_moving_average
 from .emitter import generate_chirp
+from .modulate import *
