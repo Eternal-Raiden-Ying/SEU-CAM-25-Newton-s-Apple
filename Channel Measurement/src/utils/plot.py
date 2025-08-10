@@ -4,7 +4,7 @@ import numpy as np
 from numpy.fft import fft, ifft, fftfreq
 from matplotlib.axes import Axes
 from matplotlib.font_manager import FontProperties
-from .modulate import normalize
+from .math_process import normalize
 
 # 设置字体对象
 ch_font = FontProperties(fname='/System/Library/Fonts/STHeiti Medium.ttc')   # 中文（Mac 示例）
@@ -15,6 +15,16 @@ def draw_in_TD(time, signal: np.ndarray,*,
                ax: Axes = None,
                x_label: str = "",
                y_label: str = ""):
+    """
+        given signal duration and signal in time domain, draw it in TD
+    :param time: signal duration
+    :param signal: signal in TD
+    :param title: pic title
+    :param ax: Axes, for subplots
+    :param x_label:
+    :param y_label:
+    :return: None
+    """
 
     if isinstance(time, int) or isinstance(time, float):
         x = np.linspace(0, time, signal.size)
@@ -49,6 +59,20 @@ def draw_in_FD(freq, signal: np.ndarray,*,
                mode: str = 'Amplitude',
                ignore_zero: bool = True,
                eps: float = 1e-12):
+    """
+        given fs and signal in TD, draw the freq pic
+    :param freq:  sampling freq
+    :param signal: signal in TD !!!
+    :param title: pic title
+    :param ax: Axes, for subplots
+    :param x_label:
+    :param y_label:
+    :param half: boolean, show only in positive freq
+    :param mode: supported ['Amplitude', 'Phase']
+    :param ignore_zero: boolean, for mode 'Amplitude' if encounter 0 ignore it to get a smoother line
+    :param eps:
+    :return: None
+    """
 
     freq_shift = False
     if isinstance(freq, int) or isinstance(freq, float):
@@ -105,9 +129,11 @@ def draw_constellation_map(received, emit_pilot, mode='QPSK',
 
     :param received: received signal in freq domain, without the conjugate part
     :param emit_pilot: emit pilot signal without the conjugate part
+    :param ax:  Axes, for subplots
+    :param title:  title for pic
     :param pth: if the sig needs to save, specified
-    :param filename:
-    :return:
+    :param filename: if the sig needs to save, specified
+    :return: None
     """
     constellation_emit = normalize(emit_pilot).flatten()
     constellation = received.flatten()

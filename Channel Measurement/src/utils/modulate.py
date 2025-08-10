@@ -5,6 +5,15 @@ from scipy.signal import chirp
 
 
 def generate_chirp(fs, duration, f_l, f_h,*, method='linear'):
+    """
+        generate a chirp signal in time domain, max val is 1
+    :param fs: sampling freq
+    :param duration: duration of chirp signal, usually 1 or 2
+    :param f_l: low freq (start freq)
+    :param f_h: high freq (end freq)
+    :param method: ‘linear’, ‘quadratic’, ‘logarithmic’, ‘hyperbolic’, default 'linear'
+    :return: a chirp signal, data type of np.ndarray
+    """
     t = np.linspace(0, duration, int(fs * duration))
     chirp_sig = chirp(t, f0=f_l, f1=f_h, t1=duration, method='linear')
     return chirp_sig
@@ -12,12 +21,17 @@ def generate_chirp(fs, duration, f_l, f_h,*, method='linear'):
 
 def QPSK_mapping(data: np.ndarray,*,clockwise=False):
     """
-    turn a binary np.ndarray into a complex sequence, without the conjugate part and cp
-    remain its shape except the last dim, e.g. (8,2047,2) -> (8,2047)
-    output is not normalized
+        turn a binary np.ndarray (the code sequence) into a complex sequence,
+        without the conjugate part and cp
+        remain its shape except the last dim, e.g. (8,2047,2) -> (8,2047)
+        output is normalized
     :param data: the binary data, the last dim must be 2, either it would raise Error
-    :param clockwise:
-    :return:
+    :param clockwise: boolean, anticlockwise default,
+        anticlockwise for:          clockwise for:
+        (0,1) | (0,0)               (1,0) | (0,0)
+        -------------               -------------
+        (1,1) | (1,0)               (1,1) | (0,1)
+    :return: normalized QPSK constellations
     """
     shape = data.shape
     assert shape[-1] == 2, f"expected length of last dim 2, but received {shape[-1]}"
@@ -28,6 +42,7 @@ def QPSK_mapping(data: np.ndarray,*,clockwise=False):
 
     res = np.zeros(shape[:len(shape)-1], dtype=np.complex128)
     bits = np.permute_dims(data, tuple(dim_order))
+    # b1b0
     b1 = bits[0]
     b0 = bits[1]
     if clockwise:
@@ -36,23 +51,40 @@ def QPSK_mapping(data: np.ndarray,*,clockwise=False):
         res[np.where(b0 == 0)] += 1j
         res[np.where(b0 == 1)] -= 1j
     else:
-        res[np.where(b0 == 0)] += 1
-        res[np.where(b0 == 1)] -= 1
         res[np.where(b1 == 0)] += 1j
         res[np.where(b1 == 1)] -= 1j
+        res[np.where(b0 == 0)] += 1
+        res[np.where(b0 == 1)] -= 1
     return res / np.sqrt(2)
 
 
-def OFDM_modulate(constellations: np.ndarray, N: int, cp_len: int, *, complement_val=0):
+def OFDM_modulate(constellations: np.ndarray, N: int, cp_len: int, *,
+                  complement_val=0, padding_clockwise=False):
+    """
+        given constellations and modulate into time signal (with cyclic prefix)
+        if use comb-type pilot or block-type pilot, turn to add_pilot() first
+
+        v2: complement_val deprecated, extreme high peak due to continuous identical values,
+            I just noticed that, maybe not that reason exactly, but I think constellations
+            from random bits is more reasonable
+    :param constellations: just your constellations
+    :param N: num of sub carrier waves
+    :param cp_len: length of cyclic prefix
+    :param complement_val: (deprecated) padding value, pad when constellations.size != k*N, default 0
+    :return: time signal with cyclic prefix
+    """
     assert constellations.ndim <= 2, "constellations for over 2 dims not supported"
     assert constellations.shape[-1] < N//2, ("in order to have the signal in time domain to be real, "
                                              "length of constellations in each symbol should less than N/2")
     constellation_len = N //2 -1
     num_symbols = int(np.ceil(constellations.size / constellation_len))
+    if complement_val:
+        print("Warning! complement_val is deprecated, see function OFDM comments for details")
     if num_symbols*constellation_len > constellations.size:
-        print("Warning! Better make sure constellations.size is k*(N//2-1)")
+        print("Warning! Better make sure constellations.size is k*(N//2-1), OFDM modulate invoked")
         complement_len = int(num_symbols*constellation_len - constellations.size)
-        constellations = np.concatenate([constellations.flatten(), complement_val*np.ones(complement_len)])
+        padding_constellations = QPSK_mapping(random_bits(2*complement_len).reshape(-1,2),clockwise=padding_clockwise)
+        constellations = np.concatenate([constellations.flatten(), padding_constellations])
         constellations = constellations.reshape(num_symbols, constellation_len)
 
     symbols = np.concatenate([np.ones((num_symbols,1), dtype=np.int32), constellations, np.ones((num_symbols,1),dtype=np.int32), np.conjugate(constellations)[:,::-1]],axis=1)
@@ -62,12 +94,43 @@ def OFDM_modulate(constellations: np.ndarray, N: int, cp_len: int, *, complement
     return symbol_with_cp
 
 
-def normalize(data: np.ndarray):
-    if data.ndim == 1:
-        max_val = np.max(np.abs(data))
+def add_pilot(data, pilot, data_idx, pilot_idx, *, N=None, padding_clockwise=False):
+    """
+        NOTE!!! given data and pilot should be 1 dim
+        mix the data and pilot with given index,
+        this function will check if idx combined is continuous when N is given,
+        but only through warning, for there exists situation when data is not enough,
+        rest will be padded with constellations from random bits (not recommended, better fill data part)
+    :param data: data part of constellations
+    :param pilot: pilot part of constellations
+    :param data_idx: data index
+    :param pilot_idx: pilot index
+    :return: constellations mixed pilot and data
+    """
+    if data.ndim > 1 or pilot.ndim > 1:
+        raise ValueError("data and pilot should be 1 dim, details at function add_pilot()")
+    assert data.size == data_idx.size, "data.size != data_idx.size"
+    assert pilot.size == pilot_idx.size, "data.size != data_idx.size"
+    if N is not None:
+        n = N//2 - 1
     else:
-        max_val = np.max(np.abs(data), axis=-1, keepdims=True)
-    return data / max_val
+        n = data.size + pilot.size
+
+    res = np.zeros(n+1)
+    if data.size + pilot.size < n:
+        padding_idx = np.setdiff1d(np.linspace(1,n,n), np.concatenate([data_idx, pilot_idx]))
+        padding = QPSK_mapping(random_bits(padding_idx.size*2).reshape(-1,2), clockwise=padding_clockwise)
+        res[padding_idx] = padding
+        res[pilot_idx] = pilot
+        res[data_idx] = data
+    elif data.size + pilot.size == n:
+        res[pilot_idx] = pilot
+        res[data_idx] = data
+    else:
+        raise ValueError("given wrong arg, size of data+pilot beyond N")
+
+    return res[1:]
+
 
 # def image_to_bits(img_path):
 #     img = cv2.imread(img_path, cv2.IMREAD_GRAYSCALE)
@@ -80,6 +143,11 @@ def normalize(data: np.ndarray):
 
 
 def get_bits_from_file(file_pth: str):
+    """
+        read file in binary and return a binary np.ndarray (flattened)
+    :param file_pth: just file path
+    :return: binary np.ndarray, like [0,0,0,1,1,1,.....]
+    """
     assert os.path.exists(file_pth), f"file not exist, given arg {file_pth}"
 
     with open(file_pth, 'rb') as file:
@@ -87,23 +155,24 @@ def get_bits_from_file(file_pth: str):
 
     byte_array = np.frombuffer(byte_data, dtype=np.uint8)
     bit_array = np.unpackbits(byte_array)
-    return bit_array
+    return bit_array.flatten()
 
 
 def serial_to_parallel(data:np.ndarray, N: int, mode='QPSK'):
     """
-    pad random bits when a block is not full
-    :param data:
-    :param N:
-    :param mode:
-    :return:
+        turn serial binary bits into parallel bits,
+        make a shape change and pad random bits when a block is not full
+    :param data: binary data to be modulated
+    :param N: N of OFDM, num of sub carrier waves
+    :param mode: constellations mapping mode, supported ['QPSK', ]
+    :return: parallel bits, suitable for QPSK mapping or other mapping func
     """
     if mode == 'QPSK':
         q = 2
     else:
         raise ValueError("only support mode ['QPSK',] now")
     n = N//2 -1
-    num = np.ceil(data.size // N)
+    num = np.ceil(data.size / N)
     data = data.flatten()
     if num * n * q > data.size:
         data = np.concatenate([data, random_bits(num*n*q - data.size)])
@@ -112,6 +181,11 @@ def serial_to_parallel(data:np.ndarray, N: int, mode='QPSK'):
 
 
 def get_bits_from_str(s: str):
+    """
+        get bits from given string
+    :param s: string
+    :return: bits, in data type np.ndarray (binary)
+    """
     byte_data = s.encode('utf-8')
     byte_array = np.frombuffer(byte_data, dtype=np.uint8)
     bit_array = np.unpackbits(byte_array)
@@ -124,10 +198,18 @@ def random_bits(n: int):
     :param n:
     :return:
     """
-    return np.random.randint(low=0, high=2, size=(n,))
+    return np.random.randint(low=0, high=2, size=(int(n),))
 
 
 def save_pilot(constellations: np.ndarray, N: int, pth, filename):
+    """
+        save pilot / freq data, for sender
+    :param constellations: constellations (data + pilot)
+    :param N: num of sub carrier waves
+    :param pth: directory for file to save (create automatically if not exists)
+    :param filename: filename
+    :return:
+    """
     constellation_len = N // 2 - 1
     num_symbols = int(np.ceil(constellations.size / constellation_len))
     if num_symbols * constellation_len > constellations.size:
@@ -141,6 +223,8 @@ def save_pilot(constellations: np.ndarray, N: int, pth, filename):
     if not os.path.exists(pth):
         os.makedirs(pth)
     np.save(os.path.join(pth, filename), pilots)
+
+
 
 if __name__ == "__main__":
     # unit test
@@ -156,6 +240,7 @@ if __name__ == "__main__":
     bits = get_bits_from_file(os.path.join(data_dir, 'test.txt'))
     bits_parallel = serial_to_parallel(bits, N=N)
     constellations = QPSK_mapping(bits_parallel)
+    save_pilot(constellations,N,data_dir,'test.npy')
     signals = OFDM_modulate(constellations,N=N,cp_len=cp_len)
     print(bits.shape)
     print(bits_parallel.shape)
