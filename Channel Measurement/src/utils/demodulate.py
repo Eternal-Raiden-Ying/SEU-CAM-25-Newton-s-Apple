@@ -127,7 +127,7 @@ def get_bytes(binary_data: np.ndarray, bitorder='big'):
     if binary_data.size > bits.size:
         print(f"{binary_data.size - bits.size} bits were dropped, see details at get_bytes()")
     try:
-        res = np.packbits(bits, axis=0, bitorder=bitorder)
+        res = np.packbits(bits.flatten(), bitorder=bitorder)
         return res
     except:
         print("Error occurred when get_bytes is invoked, make sure the given data is binary")
