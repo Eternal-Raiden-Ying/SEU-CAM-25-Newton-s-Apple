@@ -330,3 +330,4 @@ if __name__ == "__main__":
     print(random_bits(10))
 
     contrast()
+

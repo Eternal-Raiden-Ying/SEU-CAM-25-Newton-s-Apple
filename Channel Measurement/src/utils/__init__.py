@@ -17,3 +17,4 @@ from .demodulate import *
 from .decode import *
 from .math_process import *
 from .modulate import *
+from .encode import *
