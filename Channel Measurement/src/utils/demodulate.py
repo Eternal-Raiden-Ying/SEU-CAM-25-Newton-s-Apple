@@ -8,7 +8,45 @@ import sounddevice as sd
 #       X_f_est approximation / calibration
 #       check the func get bytes
 
+
+def simple_approximate(data: np.ndarray):
+    """
+        simply make a hard decision (based on the constellation's quadrant)
+    :param data: constellations received
+    :return: approximate constellations
+    """
+    # TODO: remains to be completed
+    #       here use Quadrant to judge, so normalization is not needed
+    real = np.real(data)
+    imag = np.imag(data)
+    approximate = np.zeros_like(data)
+    approximate[real >= 0] += 1
+    approximate[real < 0] -= 1
+    approximate[imag > 0] += 1j
+    approximate[imag <= 0] -= 1j
+    return approximate / np.sqrt(2)
+
+
+def non_approximate(data: np.ndarray):
+    """
+        Identity, do nothing
+    :param data:
+    :return:
+    """
+    return data
+
+
 def get_symbols(record:np.ndarray, cp_len, N, **kwargs) -> np.ndarray:
+    """
+        from record get symbols (without cyclic prefix)
+        just make a shape change and drop the cp part,
+        for a sequence shorter than symbol_len (cp_len+N), it will be dropped
+    :param record: record in TD
+    :param cp_len:
+    :param N:
+    :param kwargs: for further develop
+    :return:
+    """
     assert record.ndim == 1, f"Unexpected dimension of record, with shape{record.shape}"
     symbol_len = N + cp_len
     n_symbols = record.size // symbol_len
@@ -19,13 +57,14 @@ def get_symbols(record:np.ndarray, cp_len, N, **kwargs) -> np.ndarray:
     return ofdm_symbols
 
 
-def get_constellation(symbols: np.ndarray, H_f: np.ndarray, approximation, **kwargs):
+def get_constellation(symbols: np.ndarray, H_f: np.ndarray, approximation=non_approximate, **kwargs):
     """
-    return constellation with meanings, exclude the conjugate part
-    :param symbols:
-    :param H_f:
-    :param approximation:
-    :param kwargs:
+        return constellation with meanings, exclude the conjugate part
+    :param symbols: symbols in TD (without cp), you can get it from get_symbols()
+    :param H_f: estimated H(f), you can get it from evaluate_H_f()
+    :param approximation: choose a approximation rule, default non approximate
+    :param kwargs: for further develop
+        'symbol_len': when more than 1 symbol is given, symbol length should be specified
     :return:
     """
     if 'symbol_len' in kwargs:
@@ -46,46 +85,49 @@ def get_constellation(symbols: np.ndarray, H_f: np.ndarray, approximation, **kwa
     return approximation(data_carriers)
 
 
-def simple_approximate(data: np.ndarray):
-    # TODO: remains to be completed
-    #       here use Quadrant to judge, so normalization is not needed
-    real = np.real(data)
-    imag = np.imag(data)
-    approximate = np.zeros_like(data)
-    approximate[real >= 0] += 1
-    approximate[real < 0] -= 1
-    approximate[imag > 0] += 1j
-    approximate[imag <= 0] -= 1j
-    return approximate
-
-
-def non_approximate(data: np.ndarray):
-    return data
-
-def QPSK_reflection(data: np.ndarray, *, clockwise:bool = False, judge_radius = 0.5):
+def QPSK_reflection(data: np.ndarray, *, clockwise:bool = False, judge_radius=0.5):
+    """
+        constellations -->  binary np.ndarray
+        better use with approximation (even simple)
+        # TODO: reamin to turn it to be a BEC
+    :param data: constellations
+    :param clockwise: details at QPSK_mapping(), default anticlockwise
+    :param judge_radius:
+    :return:
+    """
     data_dim = data.ndim
-    res = np.stack([np.zeros_like(data), np.zeros_like(data)], axis=data_dim)
+    res = np.stack([np.ones_like(data), np.ones_like(data)], axis=data_dim) * (-1)
     if clockwise:
-        res[np.where(np.abs(data-(1+1j)) < judge_radius)] = [0,0]
-        res[np.where(np.abs(data-(-1+1j)) < judge_radius)] = [1,0]
-        res[np.where(np.abs(data-(-1-1j)) < judge_radius)] = [1,1]
-        res[np.where(np.abs(data-(1-1j)) < judge_radius)] = [0,1]
+        res[np.where(np.abs(data-(1+1j)/np.sqrt(2)) < judge_radius)] = [0,0]
+        res[np.where(np.abs(data-(-1+1j)/np.sqrt(2)) < judge_radius)] = [1,0]
+        res[np.where(np.abs(data-(-1-1j)/np.sqrt(2)) < judge_radius)] = [1,1]
+        res[np.where(np.abs(data-(1-1j)/np.sqrt(2)) < judge_radius)] = [0,1]
     else:
-        res[np.where(np.abs(data-(1+1j)) < judge_radius)] = [0,0]
-        res[np.where(np.abs(data-(-1+1j)) < judge_radius)] = [0,1]
-        res[np.where(np.abs(data-(-1-1j)) < judge_radius)] = [1,1]
-        res[np.where(np.abs(data-(1-1j)) < judge_radius)] = [1,0]
+        res[np.where(np.abs(data-(1+1j)/np.sqrt(2)) < judge_radius)] = [0,0]
+        res[np.where(np.abs(data-(-1+1j)/np.sqrt(2)) < judge_radius)] = [0,1]
+        res[np.where(np.abs(data-(-1-1j)/np.sqrt(2)) < judge_radius)] = [1,1]
+        res[np.where(np.abs(data-(1-1j)/np.sqrt(2)) < judge_radius)] = [1,0]
 
     res = np.real(res)
     res = res.astype(int)
     return res
 
 def get_bytes(binary_data: np.ndarray, bitorder='big'):
+    """
+        turn a binary np.ndarray into a sequence of bytes
+        raise an error when given data is not binary
+        NOTE: func will drop the excessive bit, info given yet
+    :param binary_data: binary data
+    :param bitorder: bit order, big default, intuitive
+    :return: bytes sequence
+    """
     if bitorder not in ['big', 'little']:
         raise ValueError("bitorder should in ['big', 'little']")
     bits = binary_data.flatten()[:binary_data.size // 8 * 8].reshape(-1, 8)
+    if binary_data.size > bits.size:
+        print(f"{binary_data.size - bits.size} bits were dropped, see details at get_bytes()")
     try:
-        res = np.packbits(bits, axis=-1, bitorder=bitorder)
+        res = np.packbits(bits.flatten(), bitorder=bitorder)
         return res
     except:
         print("Error occurred when get_bytes is invoked, make sure the given data is binary")
@@ -94,7 +136,7 @@ def get_bytes(binary_data: np.ndarray, bitorder='big'):
 
 def evaluate_H_f(known_symbols: np.ndarray, pilot_signals: np.ndarray):
     """
-    evaluate H(f) by pilot signals (when several is given, H is calculated through average)
+        evaluate H(f) by pilot signals (when several is given, H is calculated through average)
     :param known_symbols: symbol extracted from received pilot signal (exclude CP)
     :param pilot_signals: original pilot signal (include the conjugate part)
     :return:
@@ -110,5 +152,5 @@ def evaluate_H_f(known_symbols: np.ndarray, pilot_signals: np.ndarray):
 
 # here is for unit test
 if __name__ == "__main__":
-    test_arr = np.array([[1+1j,1-1j, 1-1j],[-1+1j,-1-1j, 1-1j],[-1+1j,-1-1j, 1-1j]])
+    test_arr = np.array([[1+1j,1-1j, 1-1j],[-1+1j,-1-1j, 1-1j],[-1+1j,-1-1j, 1-1j]])/np.sqrt(2)
     print(QPSK_reflection(test_arr))

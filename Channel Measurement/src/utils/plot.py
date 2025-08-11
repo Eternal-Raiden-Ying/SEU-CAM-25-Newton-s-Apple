@@ -4,6 +4,7 @@ import numpy as np
 from numpy.fft import fft, ifft, fftfreq
 from matplotlib.axes import Axes
 from matplotlib.font_manager import FontProperties
+from .math_process import normalize
 
 # 设置字体对象
 ch_font = FontProperties(fname='/System/Library/Fonts/STHeiti Medium.ttc')   # 中文（Mac 示例）
@@ -14,6 +15,16 @@ def draw_in_TD(time, signal: np.ndarray,*,
                ax: Axes = None,
                x_label: str = "",
                y_label: str = ""):
+    """
+        given signal duration and signal in time domain, draw it in TD
+    :param time: signal duration
+    :param signal: signal in TD
+    :param title: pic title
+    :param ax: Axes, for subplots
+    :param x_label:
+    :param y_label:
+    :return: None
+    """
 
     if isinstance(time, int) or isinstance(time, float):
         x = np.linspace(0, time, signal.size)
@@ -48,6 +59,20 @@ def draw_in_FD(freq, signal: np.ndarray,*,
                mode: str = 'Amplitude',
                ignore_zero: bool = True,
                eps: float = 1e-12):
+    """
+        given fs and signal in TD, draw the freq pic
+    :param freq:  sampling freq
+    :param signal: signal in TD !!!
+    :param title: pic title
+    :param ax: Axes, for subplots
+    :param x_label:
+    :param y_label:
+    :param half: boolean, show only in positive freq
+    :param mode: supported ['Amplitude', 'Phase']
+    :param ignore_zero: boolean, for mode 'Amplitude' if encounter 0 ignore it to get a smoother line
+    :param eps:
+    :return: None
+    """
 
     freq_shift = False
     if isinstance(freq, int) or isinstance(freq, float):
@@ -99,23 +124,27 @@ def draw_in_FD(freq, signal: np.ndarray,*,
 
 def draw_constellation_map(received, emit_pilot, mode='QPSK',
                            title='constellation_map',*,
-                           ax=None,pth=None, filename=None):
+                           ax=None,pth=None, filename=None,
+                           limit_border=5):
     """
 
     :param received: received signal in freq domain, without the conjugate part
     :param emit_pilot: emit pilot signal without the conjugate part
+    :param ax:  Axes, for subplots
+    :param title:  title for pic
     :param pth: if the sig needs to save, specified
-    :param filename:
-    :return:
+    :param filename: if the sig needs to save, specified
+    :return: None
     """
-    constellation_emit = emit_pilot.flatten()
+    constellation_emit = normalize(emit_pilot).flatten()
     constellation = received.flatten()
+    judge_radius = 0.1
 
     if mode == 'QPSK':
-        red_mask = np.where(constellation_emit == 1 + 1j)
-        green_mask = np.where(constellation_emit == -1 + 1j)
-        blue_mask = np.where(constellation_emit == -1 - 1j)
-        yellow_mask = np.where(constellation_emit == 1 - 1j)
+        red_mask = np.where(np.abs(constellation_emit-(1+1j)/np.sqrt(2)) < judge_radius)
+        green_mask = np.where(np.abs(constellation_emit-(-1+1j)/np.sqrt(2)) < judge_radius)
+        blue_mask = np.where(np.abs(constellation_emit-(-1-1j)/np.sqrt(2)) < judge_radius)
+        yellow_mask = np.where(np.abs(constellation_emit-(1-1j)/np.sqrt(2)) < judge_radius)
 
         real = np.real(constellation)
         imag = np.imag(constellation)
@@ -126,8 +155,8 @@ def draw_constellation_map(received, emit_pilot, mode='QPSK',
             'YELLOW': {'real': real[yellow_mask], 'imag': imag[yellow_mask], 'color': 'yellow', 'label': '1-j'}
         }
         if ax:
-            ax.set_xlim(-5, 5)
-            ax.set_ylim(-5, 5)
+            ax.set_xlim(-limit_border, limit_border)
+            ax.set_ylim(-limit_border, limit_border)
             ax.set_title(title)
             for k, data in groups.items():
                 ax.scatter(data['real'], data['imag'], c=data['color'], label=data['label'], alpha=0.6, s=1)
@@ -137,8 +166,8 @@ def draw_constellation_map(received, emit_pilot, mode='QPSK',
             for k, data in groups.items():
                 plt.scatter(data['real'], data['imag'], c=data['color'], label=data['label'], alpha=0.6, s=1)
             plt.grid()
-            plt.xlim(-5,5)
-            plt.ylim(-5,5)
+            plt.xlim(-limit_border,limit_border)
+            plt.ylim(-limit_border,limit_border)
 
         if filename:
             plt.savefig(os.path.join(pth, filename), dpi=300) if pth else plt.savefig(filename, dpi=300)
