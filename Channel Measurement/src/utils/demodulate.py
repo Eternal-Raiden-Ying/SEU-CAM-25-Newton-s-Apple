@@ -123,11 +123,11 @@ def get_bytes(binary_data: np.ndarray, bitorder='big'):
     """
     if bitorder not in ['big', 'little']:
         raise ValueError("bitorder should in ['big', 'little']")
-    bits = binary_data.flatten()[:binary_data.size // 8 * 8].reshape(-1, 8)
+    bits = binary_data.flatten()[:binary_data.size // 8 * 8]
     if binary_data.size > bits.size:
         print(f"{binary_data.size - bits.size} bits were dropped, see details at get_bytes()")
     try:
-        res = np.packbits(bits, axis=0, bitorder=bitorder)
+        res = np.packbits(bits, bitorder=bitorder)
         return res
     except:
         print("Error occurred when get_bytes is invoked, make sure the given data is binary")
