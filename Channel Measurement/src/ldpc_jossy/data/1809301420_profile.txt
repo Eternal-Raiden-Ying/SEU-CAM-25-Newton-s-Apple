@@ -1,0 +1,81 @@
+         298968 function calls (282780 primitive calls) in 30.451 seconds
+
+   Ordered by: standard name
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+        1    0.000    0.000   30.451   30.451 <string>:1(<module>)
+      213    0.002    0.000    0.068    0.000 __init__.py:332(__init__)
+      213    0.000    0.000    0.000    0.000 __init__.py:342(_FuncPtr)
+      213    0.001    0.000    0.004    0.000 __init__.py:358(__getattr__)
+      213    0.003    0.000    0.003    0.000 __init__.py:365(__getitem__)
+     1065    0.004    0.000    0.004    0.000 __init__.py:484(cast)
+        2    0.000    0.000    0.000    0.000 _bootlocale.py:23(getpreferredencoding)
+     1065    0.002    0.000    0.002    0.000 _internal.py:247(__init__)
+     1065    0.001    0.000    0.005    0.000 _internal.py:259(data_as)
+      430    0.000    0.000    0.010    0.000 _methods.py:31(_sum)
+        2    0.000    0.000    0.000    0.000 codecs.py:185(__init__)
+        2    0.000    0.000    0.000    0.000 codecs.py:213(setstate)
+     5326    0.006    0.000    0.021    0.000 fromnumeric.py:1534(nonzero)
+      426    0.001    0.000    0.004    0.000 fromnumeric.py:163(reshape)
+      430    0.005    0.000    0.015    0.000 fromnumeric.py:1778(sum)
+        2    0.000    0.000    0.000    0.000 fromnumeric.py:2101(cumsum)
+        2    0.000    0.000    0.000    0.000 fromnumeric.py:382(repeat)
+     5757    0.006    0.000    0.019    0.000 fromnumeric.py:50(_wrapfunc)
+        1    0.000    0.000    0.000    0.000 fromnumeric.py:851(argsort)
+        2    0.000    0.000    0.000    0.000 function_base.py:4908(insert)
+        1    0.000    0.000    0.000    0.000 ldpc.py:24(assign_proto)
+        1    0.063    0.063    0.063    0.063 ldpc.py:303(prepare_decoder)
+      213    0.166    0.001    0.854    0.004 ldpc.py:399(encode)
+      213   29.385    0.138   29.466    0.138 ldpc.py:462(decode)
+        1    0.000    0.000    0.064    0.064 ldpc.py:5(__init__)
+      213    0.008    0.000    0.018    0.000 ldpc_awgn.py:45(awgn)
+      213    0.002    0.000    0.002    0.000 ldpc_awgn.py:51(ch2llr)
+      213    0.004    0.000    0.004    0.000 ldpc_awgn.py:55(bpsk)
+        1    0.019    0.019   30.451   30.451 ldpc_awgn.py:60(sim)
+32376/16188    0.474    0.000    0.652    0.000 numeric.py:1309(roll)
+    16188    0.012    0.000    0.012    0.000 numeric.py:1378(<dictcomp>)
+    16192    0.055    0.000    0.080    0.000 numeric.py:1459(normalize_axis_tuple)
+        1    0.000    0.000    0.000    0.000 numeric.py:146(ones)
+    32384    0.014    0.000    0.022    0.000 numeric.py:1506(<genexpr>)
+        2    0.000    0.000    0.000    0.000 numeric.py:1515(moveaxis)
+        2    0.000    0.000    0.000    0.000 numeric.py:1577(<listcomp>)
+        2    0.000    0.000    0.000    0.000 numeric.py:424(asarray)
+    32376    0.015    0.000    0.033    0.000 numeric.py:495(asanyarray)
+     1065    0.001    0.000    0.001    0.000 {built-in method _ctypes.POINTER}
+      213    0.053    0.000    0.053    0.000 {built-in method _ctypes.dlopen}
+        2    0.000    0.000    0.000    0.000 {built-in method _locale.nl_langinfo}
+    16192    0.003    0.000    0.003    0.000 {built-in method _operator.index}
+      213    0.013    0.000    0.013    0.000 {built-in method builtins.__build_class__}
+        1    0.000    0.000   30.451   30.451 {built-in method builtins.exec}
+     5757    0.003    0.000    0.003    0.000 {built-in method builtins.getattr}
+      645    0.001    0.000    0.001    0.000 {built-in method builtins.isinstance}
+     1506    0.001    0.000    0.001    0.000 {built-in method builtins.len}
+      213    0.000    0.000    0.000    0.000 {built-in method builtins.setattr}
+        2    0.000    0.000    0.000    0.000 {built-in method builtins.sorted}
+        2    0.000    0.000    0.000    0.000 {built-in method io.open}
+    32383    0.018    0.000    0.018    0.000 {built-in method numpy.core.multiarray.array}
+        1    0.000    0.000    0.000    0.000 {built-in method numpy.core.multiarray.copyto}
+    16188    0.015    0.000    0.015    0.000 {built-in method numpy.core.multiarray.empty_like}
+        3    0.000    0.000    0.000    0.000 {built-in method numpy.core.multiarray.empty}
+    16192    0.008    0.000    0.008    0.000 {built-in method numpy.core.multiarray.normalize_axis_index}
+      853    0.005    0.000    0.005    0.000 {built-in method numpy.core.multiarray.zeros}
+        1    0.000    0.000    0.000    0.000 {method 'argsort' of 'numpy.ndarray' objects}
+        2    0.007    0.004    0.007    0.004 {method 'close' of '_io.TextIOWrapper' objects}
+        2    0.000    0.000    0.000    0.000 {method 'cumsum' of 'numpy.ndarray' objects}
+        1    0.000    0.000    0.000    0.000 {method 'disable' of '_lsprof.Profiler' objects}
+        2    0.000    0.000    0.000    0.000 {method 'insert' of 'list' objects}
+        2    0.000    0.000    0.000    0.000 {method 'item' of 'numpy.ndarray' objects}
+    16188    0.004    0.000    0.004    0.000 {method 'items' of 'dict' objects}
+     5326    0.007    0.000    0.007    0.000 {method 'nonzero' of 'numpy.ndarray' objects}
+      213    0.007    0.000    0.007    0.000 {method 'randint' of 'mtrand.RandomState' objects}
+      213    0.010    0.000    0.010    0.000 {method 'randn' of 'mtrand.RandomState' objects}
+    16188    0.012    0.000    0.012    0.000 {method 'ravel' of 'numpy.ndarray' objects}
+      430    0.009    0.000    0.009    0.000 {method 'reduce' of 'numpy.ufunc' objects}
+        2    0.000    0.000    0.000    0.000 {method 'repeat' of 'numpy.ndarray' objects}
+    16614    0.024    0.000    0.024    0.000 {method 'reshape' of 'numpy.ndarray' objects}
+      213    0.000    0.000    0.000    0.000 {method 'startswith' of 'str' objects}
+     5112    0.003    0.000    0.003    0.000 {method 'tolist' of 'numpy.ndarray' objects}
+        2    0.000    0.000    0.000    0.000 {method 'transpose' of 'numpy.ndarray' objects}
+        4    0.000    0.000    0.000    0.000 {method 'write' of '_io.TextIOWrapper' objects}
+
+
