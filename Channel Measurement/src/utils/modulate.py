@@ -14,7 +14,6 @@ def normalize(data: np.ndarray,*, axis=-1, keepdim=False):
         max_val = np.max(np.abs(data), axis=axis, keepdims=keepdim)
     return data / max_val
 
-
 def generate_chirp(fs, duration, f_l, f_h,*, method='linear'):
     """
         generate a chirp signal in time domain, max val is 1
@@ -28,7 +27,6 @@ def generate_chirp(fs, duration, f_l, f_h,*, method='linear'):
     t = np.linspace(0, duration, int(fs * duration))
     chirp_sig = chirp(t, f0=f_l, f1=f_h, t1=duration, method='linear')
     return chirp_sig
-
 
 def QPSK_mapping(data: np.ndarray,*,clockwise=False):
     """
@@ -68,7 +66,6 @@ def QPSK_mapping(data: np.ndarray,*,clockwise=False):
         res[np.where(b0 == 1)] -= 1
     return res / np.sqrt(2)
 
-
 def OFDM_modulate(constellations: np.ndarray, N: int, cp_len: int, *,
                   complement_val=0, padding_clockwise=False):
     """
@@ -103,7 +100,6 @@ def OFDM_modulate(constellations: np.ndarray, N: int, cp_len: int, *,
     symbol_td = np.real(np.fft.ifft(symbols, axis=1))
     symbol_with_cp = np.concatenate([symbol_td[:,-cp_len:], symbol_td], axis=1)
     return symbol_with_cp
-
 
 def add_pilot(data, pilot, data_idx, pilot_idx, *, N=None, padding_clockwise=False):
     """
@@ -142,7 +138,6 @@ def add_pilot(data, pilot, data_idx, pilot_idx, *, N=None, padding_clockwise=Fal
 
     return res[1:]
 
-
 # def image_to_bits(img_path):
 #     img = cv2.imread(img_path, cv2.IMREAD_GRAYSCALE)
 #     print(f"Original image shape: {img.shape}")
@@ -151,7 +146,6 @@ def add_pilot(data, pilot, data_idx, pilot_idx, *, N=None, padding_clockwise=Fal
 #     flat = binary_img.flatten()
 #     bits = (flat > 0).astype(np.uint8)
 #     return bits
-
 
 def get_bits_from_file(file_pth: str):
     """
@@ -167,7 +161,6 @@ def get_bits_from_file(file_pth: str):
     byte_array = np.frombuffer(byte_data, dtype=np.uint8)
     bit_array = np.unpackbits(byte_array)
     return bit_array.flatten()
-
 
 def serial_to_parallel(data:np.ndarray, N: int, mode='QPSK'):
     """
@@ -190,7 +183,6 @@ def serial_to_parallel(data:np.ndarray, N: int, mode='QPSK'):
     data = data. reshape(-1, n, q)
     return data
 
-
 def get_bits_from_str(s: str):
     """
         get bits from given string
@@ -202,7 +194,6 @@ def get_bits_from_str(s: str):
     bit_array = np.unpackbits(byte_array)
     return bit_array
 
-
 def random_bits(n: int):
     """
         return a random generated binary ndarray with size n
@@ -210,7 +201,6 @@ def random_bits(n: int):
     :return:
     """
     return np.random.randint(low=0, high=2, size=(int(n),))
-
 
 def save_pilot(constellations: np.ndarray, N: int, pth, filename):
     """
@@ -234,7 +224,6 @@ def save_pilot(constellations: np.ndarray, N: int, pth, filename):
     if not os.path.exists(pth):
         os.makedirs(pth)
     np.save(os.path.join(pth, filename), pilots)
-
 
 def contrast():
     # 录音播放部分
@@ -305,7 +294,6 @@ def contrast():
     my_tx = normalize(my_tx.flatten())
     tx_signal_real = np.concatenate([chirp_sig, tx_signal_real])
     return tx_signal_real
-
 
 if __name__ == "__main__":
     # unit test

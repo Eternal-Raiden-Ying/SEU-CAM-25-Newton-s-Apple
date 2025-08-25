@@ -174,3 +174,4 @@ def draw_constellation_map(received, emit_pilot, mode='QPSK',
 
     else:
         raise ValueError("Unsupported mode, mode should be in ['QPSK',]")
+

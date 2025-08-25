@@ -55,7 +55,6 @@ def get_top_idx_val(data: np.ndarray, n=5):
     top_vals = data[sorted_idx]
     return sorted_idx, top_vals
 
-
 def analysis_simple_pilots():
     fs = 48000
     N = 4096
@@ -416,8 +415,8 @@ def analysis_txt():
     span = 8
     sps = 1  # Matched filter applied to sampled signal
 
-    rx = np.load(fr"D:\Pycharm\SEU-CAM-25-Newton-s-Apple\Channel Measurement\received_signal_shakeapace_block_pilot.npy")
-    pilot = np.load(fr"D:\Pycharm\SEU-CAM-25-Newton-s-Apple\Channel Measurement\pilot_gyh.txt(3).npy")
+    rx = np.load(fr"D:\Pycharm\SEU-CAM-25-Newton-s-Apple\Channel Measurement\record\LDPC\received_signal_chirp_l2_10_24k_fs48k_N4096_cp1024_S8diff_R1-2_Z27_802.11n_A_scrambler7b.npy")
+    pilot = np.load(fr"D:\Pycharm\PythonProject1\save\pilot_different_txt11.npy")
     chirp_template = generate_chirp(fs, duration=2, f_l=10, f_h=24000)
 
     corr = correlate(rx, chirp_template, mode='full')
@@ -568,7 +567,7 @@ def analysis_txt():
     # rx_data /= np.max(np.abs(rx_data))  # Normalize
     symbols = get_symbols(record=rx_data, N=N, cp_len=cp_len)
     received_bits = list()
-    emit_bits = get_bits_from_file(r"D:\Pycharm\SEU-CAM-25-Newton-s-Apple\Channel Measurement\src\OFDM\shakespace(short)(2).txt")
+    emit_bits = get_bits_from_file(r"D:\Pycharm\SEU-CAM-25-Newton-s-Apple\Channel Measurement\data\shakespace(short).txt")
     # Descramble the original bits for comparison
     emit_bits = descrambler(emit_bits, seed=0b1111111)
     emit_constellations = QPSK_mapping(serial_to_parallel(emit_bits, N=N))
