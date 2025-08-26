@@ -440,9 +440,9 @@ def plot_pre_post_ber(pre_ber: np.ndarray, post_ber: np.ndarray):
 
 def analysis_txt(plot=False, plot_opt=None):
     rx = np.load(
-        fr"D:\Pycharm\SEU-CAM-25-Newton-s-Apple\Channel Measurement\record\LDPC\received_tiff_chirp_l2_10_24k_fs48k_N8192_cp1024_S8diff_R1-2_Z27_802.11n_A_random_middle_0.8_2.npy")
+        fr"D:\Documents\Coding\Python\SEUCAM\Channel Measurement\temp\received_tiff_chirp_l2_10_24k_fs48k_N8192_cp1024_S8diff_R1-2_Z27_802.11n_A_random_middle_0.8_2.npy")
     pilot = np.load(
-        fr"D:\Pycharm\SEU-CAM-25-Newton-s-Apple\Channel Measurement\save\pilot\pilot_different_txt820_seed256_comb_1.npy")
+        fr"D:\Documents\Coding\Python\SEUCAM\Channel Measurement\record\LDPC\pilot_different_txt820_seed256_part0.8_comb.npy")
     chirp_template = generate_chirp(fs, duration=2, f_l=10, f_h=24000)
 
     corr = correlate(rx, chirp_template, mode='full')
@@ -649,7 +649,7 @@ def analysis_txt(plot=False, plot_opt=None):
         pic_idx = data_pos[pic_idx]
         fig, axes = plt.subplots(n_rows, n_cols, figsize=(10, 12))
 
-    emit_bits = get_bits_from_file(r"D:\Pycharm\SEU-CAM-25-Newton-s-Apple\Channel Measurement\data\file03.tiff")
+    emit_bits = get_bits_from_file(r"D:\Documents\Coding\Python\SEUCAM\Channel Measurement\temp\Jossy origin.tiff")
     # emit_bits = scrambler(emit_bits, seed=0b1111111)
     emit_bits = scrambler_random(emit_bits, seed=256)
     emit_bits_ldpc, (K, Ncw) = ldpc_encode_bits(emit_bits)
