@@ -1,7 +1,7 @@
 import os
 import numpy as np
 import sys
-LDPC_PY_PATH = r'D:\\Pycharm\\SEU-CAM-25-Newton-s-Apple\\ldpc_jossy\\py'
+from .abs_dir_def import LDPC_PY_PATH
 if LDPC_PY_PATH and LDPC_PY_PATH not in sys.path:
     sys.path.append(LDPC_PY_PATH)
 import ldpc
@@ -46,7 +46,7 @@ def scrambler(bits, seed=0b1111111, bit_width=7):
         out[i] = bits[i] ^ newbit
         state = ((state << 1) & c) | newbit
         # if you want to see how this function work, run the code below
-        print(f"i:{i}, newbit:{newbit}, ", f"new_state:{state:>7b}".replace(' ', '0'))
+        # print(f"i:{i}, newbit:{newbit}, ", f"new_state:{state:>7b}".replace(' ', '0'))
     return out
 
 # LDPC parameters (defaults are safe; change to your needs)
@@ -72,7 +72,7 @@ def ldpc_encode_bits(in_bits,
     rem = len(in_bits) % K
     if rem != 0:
         pad = K - rem
-        in_bits = np.concatenate([in_bits, np.zeros(pad, dtype=np.uint8)])
+        in_bits = np.concatenate([in_bits, np.random.randint(0,2,pad,dtype=np.uint8)])
         n_full += 1
 
     in_bits = in_bits.reshape(n_full, K)
@@ -83,6 +83,20 @@ def ldpc_encode_bits(in_bits,
 
     cw = np.concatenate(codewords)
     return cw, (K, N)
+
+
+def scrambler_random(bits, seed=42):
+    """
+    使用固定随机种子生成伪随机 bit 流进行按位异或 scrambler
+    :param bits: 输入 bit 数组（0/1）
+    :param seed: 随机种子
+    :return: scrambled bit 数组
+    """
+    rng = np.random.default_rng(seed) # 创建随机生成器
+    prbs = rng.integers(0, 2, size=len(bits), dtype=np.uint8) # 生成 0/1 伪随机序列
+    scrambled = np.bitwise_xor(bits, prbs) # 按位异或
+    return scrambled.astype(np.uint8)
+
 
 if __name__ == "__main__":
     bits = np.array([0,0,1,0,1,1,0,1])

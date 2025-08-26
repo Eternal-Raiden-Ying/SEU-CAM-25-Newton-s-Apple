@@ -26,9 +26,6 @@ def get_bits_from_txt(file_pth: str):
     bit_array = np.unpackbits(byte_array)
     return bit_array.flatten()
 
-# Scrambler function to randomize bits
-
-
 # Generate a linear chirp signal
 def generate_chirp(fs, duration=2, f0=10, f1=24000):
     t = np.linspace(0, duration, int(fs * duration))
@@ -92,23 +89,6 @@ def ofdm_modulate(symbol_freq):
     time_signal = np.fft.ifft(symbol_freq)
     return np.concatenate([time_signal[-cp_len:], time_signal])
 
-# Generate RRC filter
-# def rrc(beta, span, sps):
-#     # beta: roll-off, span in symbols, sps samples per symbol
-#     N = span * sps
-#     t = np.arange(-N/2, N/2 + 1) / float(sps)
-#     h = np.zeros_like(t)
-#     for i, ti in enumerate(t):
-#         if ti == 0.0:
-#             h[i] = 1.0 - beta + 4*beta/np.pi
-#         elif abs(abs(ti) - 1/(4*beta)) < 1e-8:
-#             h[i] = (beta/np.sqrt(2)) * ((1+2/np.pi) *
-#                     (np.sin(np.pi/(4*beta))) + (1-2/np.pi) * (np.cos(np.pi/(4*beta))))
-#         else:
-#             numerator = np.sin(np.pi*ti*(1-beta)) + 4*beta*ti*np.cos(np.pi*ti*(1+beta))
-#             denominator = np.pi*ti*(1-(4*beta*ti)**2)
-#             h[i] = numerator / denominator
-#     return h / np.sqrt(np.sum(h**2))  # normalize
 
 # Generate the chirp signal for prefix
 chirp_sig = generate_chirp(fs, f0=10, f1=24000)
@@ -125,11 +105,9 @@ if i == '1':
         pilot_different.append(pilot)  # Collect different pilots
         ofdm_time = ofdm_modulate(pilot)
         tx_signal = np.concatenate([tx_signal, ofdm_time])
-    np.save(output_path, pilot_different)  # Save the list of pilots
 else:
     pilot = generate_pilot_symbol(N)
     ofdm_time = ofdm_modulate(pilot)
-    np.save(output_path, pilot)
     print(f"pilot shape: {pilot.shape}")
     for _ in range(num_symbols):
         tx_signal = np.concatenate([tx_signal, ofdm_time])
@@ -144,83 +122,70 @@ if i == '1':
 else:
     tx_signal_real = np.concatenate([chirp_sig, tx_signal_real])
 
-# def clipping_filtering(signal, fs, clipping_threshold_ratio=0.4, filter_order=5, cutoff_freq=20000):
-#     """
-#     Clipping and Filtering for PAPR reduction
-#     :param signal: input time domain signal (1D numpy array)
-#     :param fs: sampling frequency
-#     :param clipping_threshold_ratio: clipping threshold relative to max amplitude (0~1)
-#     :param filter_order: order of Butterworth filter
-#     :param cutoff_freq: cutoff frequency of low-pass filter (Hz)
-#     :return: clipped and filtered signal
-#     """
-#     max_amp = np.max(np.abs(signal))
-#     threshold = clipping_threshold_ratio * max_amp
-#     clipped_signal = np.clip(signal, -threshold, threshold)
-#     nyq = 0.5 * fs
-#     normal_cutoff = cutoff_freq / nyq
-#     b, a = butter(filter_order, normal_cutoff, btype='low', analog=False)
-#     filtered_signal = filtfilt(b, a, clipped_signal)
-#     return filtered_signal
-
 # 使用示例
 # Read bits from a text file
-bits = get_bits_from_txt(r"D:\55495\个人文件\剑桥\OFDM\shakespace(short).txt")
-print(f"bits shape: {bits.shape}")
-print(f"bits first 10: {bits[:10]}")  # Print first 10 bits for debugging
+bits = get_bits_from_txt(r"D:\Documents\Coding\Python\SEUCAM\Channel Measurement\data\file04.wav")
 
-# Apply scrambler to randomize bits
-scrambled_bits = scrambler(bits)
-print(f"scrambled_bits first 10: {scrambled_bits[:10]}")
-
-# QPSK mapping
-qpsk_symbols = QPSK_mapping(scrambled_bits)
-print(f"symbols shape: {qpsk_symbols.shape}")
-print(f"symbols first 10: {qpsk_symbols[:10]}")
+fig, axes = plt.subplots(1,2, figsize=(10,5))
+qpsk_symbols = QPSK_mapping(bits)
 data_waveform = OFDM_modulate_data(qpsk_symbols, N, cp_len)
-print(f"data_Waveform_length: {len(data_waveform)}")
-txt_time = np.array(data_waveform)
-np.save(r"D:\Pycharm\PythonProject1\save\1"
-        r"txt_time.npy", txt_time)
-
-# 削峰并滤波
 clipped_filtered_signal = data_waveform
-clipped_filtered_signal /= np.max(np.abs(clipped_filtered_signal))  # Normalize
+clipped_filtered_signal /= np.max(np.abs(clipped_filtered_signal))
+axes[0].plot(np.linspace(0, data_waveform.size,data_waveform.size)/fs,data_waveform,color='blue',alpha=0.5)
+axes[0].axhline(y=0.5,color='red',linestyle='dotted')
+axes[0].axhline(y=-0.5,color='red',linestyle='dotted')
+axes[0].set_title("raw data")
+axes[0].set_xlabel("Time/s")
+axes[0].set_ylabel("Amplitude")
+axes[0].grid(True)
 
-# 加入RRC滤波部分
-# beta = 0.25
-# span = 8
-# sps = 1  # 由于已经是时域采样信号，使用sps=1应用滤波
-# h = rrc(beta, span, sps)
-# clipped_filtered_signal = lfilter(h, 1.0, clipped_filtered_signal)
-# clipped_filtered_signal /= np.max(np.abs(clipped_filtered_signal))  # 重新归一化
+widths = [5,6,7,9,10,11]
+label = ['5bitsLFSR','6bitsLFSR','7bitsLFSR', '9bitsLFSR', '10bitsLFSR', '11bitsLFSR']
+color = ['red', 'steelblue', 'purple', 'green','orange','pink']
+# Apply scrambler to randomize bits
+for index in range(6):
+    scrambled_bits = scrambler(bits, bit_width=widths[index])
+    print(f"scrambled_bits first 10: {scrambled_bits[:10]}")
 
-# Concatenate the chirp and transmit signal
-tx_signal_realtime = np.concatenate([tx_signal_real, data_waveform])
-signal_cut = np.concatenate([tx_signal_real, clipped_filtered_signal])
+    # QPSK mapping
+    qpsk_symbols = QPSK_mapping(scrambled_bits)
+    print(f"symbols shape: {qpsk_symbols.shape}")
+    print(f"symbols first 10: {qpsk_symbols[:10]}")
+    data_waveform = OFDM_modulate_data(qpsk_symbols, N, cp_len)
 
-# Plot the signal
-plt.plot(tx_signal_realtime)
-plt.title("Transmit Signal")
-plt.xlabel("Sample Index")
-plt.ylabel("Amplitude")
-plt.grid(True)
+
+    # 削峰并滤波
+    clipped_filtered_signal = data_waveform
+    clipped_filtered_signal /= np.max(np.abs(clipped_filtered_signal))  # Normalize
+
+
+    # Concatenate the chirp and transmit signal
+    tx_signal_realtime = np.concatenate([tx_signal_real, data_waveform])
+    signal_cut = np.concatenate([tx_signal_real, clipped_filtered_signal])
+
+    data_len = clipped_filtered_signal.size//6
+    axes[1].plot(np.linspace(data_len*index, data_len*(index+1),data_len)/fs,clipped_filtered_signal[data_len*index:data_len*(index+1)], alpha=0.5, color=color[index], label=label[index])
+axes[1].set_title("scrambled data")
+axes[1].set_xlabel("Time/s")
+axes[1].set_ylabel("Amplitude")
+axes[1].legend(loc='lower right')
+axes[1].axhline(y=0.5,color='red',linestyle='dotted')
+axes[1].axhline(y=-0.5,color='red',linestyle='dotted')
+axes[1].grid(True)
+fig.tight_layout(rect=[0, 0, 1, 0.9])
+plt.suptitle("Transmit Signal Scrambled by different LFSR (.wav)",  fontsize=16)
 plt.show()
-
-# Play the signal
-print("🔊 Playing the transmit signal...")
-sd.play(signal_cut, fs)
-sd.wait()
-
-# 画图对比
-plt.figure(figsize=(12, 6))
-plt.plot(tx_signal_realtime, label='Original Signal')
-plt.plot(signal_cut, label='Clipped & Filtered Signal', alpha=1.0)
-plt.title('Clipping and Filtering to Reduce PAPR')
-plt.legend()
-plt.grid(True)
-plt.show()
-
-# Save a WAV file
-# write(r"D:\Pycharm\PythonProject1\record\tx_signal.wav", fs, (tx_signal_real * 32767).astype(np.int16))
-print("✅ Transmission completed")
+#
+# # Play the signal
+# print("🔊 Playing the transmit signal...")
+# sd.play(signal_cut, fs)
+# sd.wait()
+#
+# # 画图对比
+# plt.figure(figsize=(12, 6))
+# plt.plot(tx_signal_realtime, label='Original Signal')
+# plt.plot(signal_cut, label='Clipped & Filtered Signal', alpha=1.0)
+# plt.title('Clipping and Filtering to Reduce PAPR')
+# plt.legend()
+# plt.grid(True)
+# plt.show()

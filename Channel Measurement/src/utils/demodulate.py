@@ -36,6 +36,10 @@ def non_approximate(data: np.ndarray):
     return data
 
 
+def normalize_approximate(data:np.ndarray):
+    eps = 1e-8
+    return data / (np.abs(data)+eps)
+
 def get_symbols(record:np.ndarray, cp_len, N, **kwargs) -> np.ndarray:
     """
         from record get symbols (without cyclic prefix)
