@@ -3,7 +3,17 @@
 /Week1 Challenge/college.xls
 *.wav
 *.npy
+*.pyc
+*.pyo
+*.pyd
 /Channel Measurement/data/
 /Channel Measurement/output/
 /Channel Measurement/record/
 /Channel Measurement/temp/
+/Channel Measurement/src/utils/__pycache__/
+/Channel Measurement/src/ldpc_jossy/bin/
+/Channel Measurement/src/ldpc_jossy/data/
+/Channel Measurement/src/ldpc_jossy/src/
+/Channel Measurement/src/ldpc_jossy/how to build(short).md
+/Channel Measurement/src/ldpc_jossy/README.md
+/Channel Measurement/src/OFDM/TODO list.py
