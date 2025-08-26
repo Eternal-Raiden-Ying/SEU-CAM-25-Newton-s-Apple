@@ -3,7 +3,7 @@ import os
 import numpy as np
 import sounddevice as sd
 import matplotlib.pyplot as plt
-from scipy.signal import correlate, chirp
+from scipy.signal import correlate, chirp, lfilter
 
 # below are relative import, ignore the warning, they won't influence the code
 parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
@@ -306,50 +306,165 @@ def analysis_simple_pilots():
 
     # statistical BER
     # identical symbols
-    # BER_total = 0
-    # emit_bits = QPSK_reflection(data=pilot[1:N // 2]).flatten()
-    # # emit_bits = QPSK_reflection(data=pilot[:effective_symbols_num, 1:N // 2]).flatten()
-    # for index in range(effective_symbols_num):
-    #     raw_constellation = get_constellation(symbols=symbols[index, :], H_f=H_fs[0],
-    #                                           approximation=simple_approximate,
-    #                                           symbol_len=N)
-    #     received_bits = QPSK_reflection(data=raw_constellation).flatten()
-    #     BER_total += 1 - np.sum(np.equal(received_bits, emit_bits)) / received_bits.size
-    # print(f"bit error rate (uncorrected):{BER_total/effective_symbols_num * 100:.4f}%")
-    #
-    # BER_total = 0
-    # for index in range(effective_symbols_num):
-    #     corrected_H_f = origin_H_f / np.exp(-1j * 2 * np.pi / N * (delta * index * symbol_len + intercept) * np.arange(N))
-    #     corrected_constellation = get_constellation(symbols=symbols[index, :], H_f=corrected_H_f,
-    #                                                 approximation=simple_approximate,
-    #                                                 symbol_len=N)
-    #     received_bits = QPSK_reflection(data=corrected_constellation).flatten()
-    #     BER_total += 1 - np.sum(np.equal(received_bits, emit_bits)) / received_bits.size
-    # print(f"bit error rate (corrected):{BER_total/effective_symbols_num * 100:.4f}%")
-
-    # # different symbols
-    received_bits = list()
+    BER_total = 0
     emit_bits = QPSK_reflection(data=pilot[1:N // 2]).flatten()
     # emit_bits = QPSK_reflection(data=pilot[:effective_symbols_num, 1:N // 2]).flatten()
     for index in range(effective_symbols_num):
         raw_constellation = get_constellation(symbols=symbols[index, :], H_f=H_fs[0],
                                               approximation=simple_approximate,
                                               symbol_len=N)
-        received_bits.append(QPSK_reflection(data=raw_constellation))
-    received_bits = np.array(received_bits).flatten()
-    BER = 1 - np.sum(np.equal(received_bits, emit_bits)) / received_bits.size
-    print(f"bit error rate (uncorrected):{BER * 100:.4f}%")
+        received_bits = QPSK_reflection(data=raw_constellation).flatten()
+        BER_total += 1 - np.sum(np.equal(received_bits, emit_bits)) / received_bits.size
+    print(f"bit error rate (uncorrected):{BER_total/effective_symbols_num * 100:.4f}%")
 
-    received_bits = list()
+    BER_total = 0
     for index in range(effective_symbols_num):
         corrected_H_f = origin_H_f / np.exp(-1j * 2 * np.pi / N * (delta * index * symbol_len + intercept) * np.arange(N))
         corrected_constellation = get_constellation(symbols=symbols[index, :], H_f=corrected_H_f,
                                                     approximation=simple_approximate,
                                                     symbol_len=N)
-        received_bits.append(QPSK_reflection(data=corrected_constellation))
-    received_bits = np.array(received_bits).flatten()
-    BER = 1 - np.sum(np.equal(received_bits, emit_bits)) / received_bits.size
-    print(f"bit error rate (corrected):{BER * 100:.4f}%")
+        received_bits = QPSK_reflection(data=corrected_constellation).flatten()
+        BER_total += 1 - np.sum(np.equal(received_bits, emit_bits)) / received_bits.size
+    print(f"bit error rate (corrected):{BER_total/effective_symbols_num * 100:.4f}%")
+
+    # # different symbols
+    # received_bits = list()
+    # emit_bits = QPSK_reflection(data=pilot[1:N // 2]).flatten()
+    # # emit_bits = QPSK_reflection(data=pilot[:effective_symbols_num, 1:N // 2]).flatten()
+    # for index in range(effective_symbols_num):
+    #     raw_constellation = get_constellation(symbols=symbols[index, :], H_f=H_fs[0],
+    #                                           approximation=simple_approximate,
+    #                                           symbol_len=N)
+    #     received_bits.append(QPSK_reflection(data=raw_constellation))
+    # received_bits = np.array(received_bits).flatten()
+    # BER = 1 - np.sum(np.equal(received_bits, emit_bits)) / received_bits.size
+    # print(f"bit error rate (uncorrected):{BER * 100:.4f}%")
+    #
+    # received_bits = list()
+    # for index in range(effective_symbols_num):
+    #     corrected_H_f = origin_H_f / np.exp(-1j * 2 * np.pi / N * (delta * index * symbol_len + intercept) * np.arange(N))
+    #     corrected_constellation = get_constellation(symbols=symbols[index, :], H_f=corrected_H_f,
+    #                                                 approximation=simple_approximate,
+    #                                                 symbol_len=N)
+    #     received_bits.append(QPSK_reflection(data=corrected_constellation))
+    # received_bits = np.array(received_bits).flatten()
+    # BER = 1 - np.sum(np.equal(received_bits, emit_bits)) / received_bits.size
+    # print(f"bit error rate (corrected):{BER * 100:.4f}%")
+
+def print_stats(s, tag=""):
+    re = s.real; im = s.imag
+    print(f"--- {tag} ---")
+    print("样本数:", s.size)
+    print("实部 mean/std:", np.mean(re), np.std(re))
+    print("虚部 mean/std:", np.mean(im), np.std(im))
+    print("实/虚 std ratio:", np.std(re)/(np.std(im)+1e-12))
+    print("实虚相关coef:", np.corrcoef(re, im)[0,1])
+    print("平均幅度:", np.mean(np.abs(s)))
+    print("幅度最小/最大:", np.min(np.abs(s)), np.max(np.abs(s)))
+    print()
+
+def remove_outliers_by_mad(s, k=6):
+    """
+    用基于MAD的方法检测幅度离群点并进行替换（保留相位，幅度限制到thresh）
+    k: 阈值倍数，越大越保守
+    """
+    amp = np.abs(s)
+    med = np.median(amp)
+    mad = np.median(np.abs(amp - med)) + 1e-12
+    thresh = med + k * mad
+    if np.any(amp > thresh):
+        idx = amp > thresh
+        phases = np.angle(s[idx])
+        s_clean = s.copy()
+        s_clean[idx] = thresh * np.exp(1j * phases)
+        return s_clean, thresh, med, mad
+    else:
+        return s.copy(), thresh, med, mad
+
+def iq_gain_phase_correction(s):
+    """
+    去均值 -> 幅度校准（使 std(real)==std(imag)）-> 用协方差白化去除相关与旋转
+    返回校正后的符号
+    """
+    s0 = s.copy()
+    mean_re = np.mean(s0.real)
+    mean_im = np.mean(s0.imag)
+    s1 = s0 - (mean_re + 1j*mean_im)
+    re_std = np.std(s1.real)
+    im_std = np.std(s1.imag)
+    if im_std > 1e-12:
+        s2 = s1.real + 1j * (s1.imag * (re_std / im_std))
+    else:
+        s2 = s1
+    X = np.vstack([s2.real, s2.imag])
+    C = np.cov(X)
+    w, V = np.linalg.eigh(C)
+    w = np.clip(w, 1e-12, None)
+    D_inv_sqrt = np.diag(1.0 / np.sqrt(w))
+    W = D_inv_sqrt @ V.T
+    X_white = W @ X
+    s_white = X_white[0, :] + 1j * X_white[1, :]
+    scale = np.mean(np.abs(s2)) / (np.mean(np.abs(s_white)) + 1e-12)
+    s_out = s_white * scale
+    return s_out
+
+def clean_and_fix_constellation(raw_constellation, mad_k=6, plot=True):
+    s = raw_constellation.copy()
+    print_stats(s, "原始")
+    s_clean, thresh, med, mad = remove_outliers_by_mad(s, k=mad_k)
+    print(f"MAD阈值: {thresh:.4f}, 中位数:{med:.4f}, MAD:{mad:.4f}")
+    print_stats(s_clean, "去极端值后")
+    s_fixed = iq_gain_phase_correction(s_clean)
+    print_stats(s_fixed, "校正后")
+    if plot:
+        plt.figure(figsize=(12, 5))
+        plt.subplot(1, 3, 1)
+        plt.scatter(s.real, s.imag, s=2)
+        plt.title("原始")
+        plt.axhline(0, color='k')
+        plt.axvline(0, color='k')
+        plt.grid(True)
+        plt.subplot(1, 3, 2)
+        plt.scatter(s_clean.real, s_clean.imag, s=2)
+        plt.title("去极端值后")
+        plt.axhline(0, color='k')
+        plt.axvline(0, color='k')
+        plt.grid(True)
+        plt.subplot(1, 3, 3)
+        plt.scatter(s_fixed.real, s_fixed.imag, s=2)
+        plt.title("校正后")
+        plt.axhline(0, color='k')
+        plt.axvline(0, color='k')
+        plt.grid(True)
+        plt.suptitle("Constellation: raw -> outlier removed -> corrected")
+        plt.show()
+    return s_fixed
+
+def inspect_constellation(received_symbols, title="Constellation inspect"):
+    s = received_symbols.flatten()
+    re = s.real
+    im = s.imag
+    print("样本数:", s.size)
+    print("实部 mean/std:", np.mean(re), np.std(re))
+    print("虚部 mean/std:", np.mean(im), np.std(im))
+    print("实/虚 std ratio:", np.std(re)/ (np.std(im)+1e-12))
+    print("实虚相关coef:", np.corrcoef(re, im)[0,1])
+    print("平均幅度:", np.mean(np.abs(s)))
+    print("幅度最小/最大:", np.min(np.abs(s)), np.max(np.abs(s)))
+    plt.figure(figsize=(12,5))
+    plt.subplot(1,2,1)
+    plt.scatter(re, im, s=2, alpha=0.6)
+    plt.axhline(0, color='k', lw=0.5)
+    plt.axvline(0, color='k', lw=0.5)
+    plt.title(title)
+    plt.xlabel('Real'); plt.ylabel('Imag')
+    plt.grid(True)
+    plt.subplot(1,2,2)
+    plt.hist(np.abs(s), bins=80)
+    plt.title("Amplitude histogram")
+    plt.xlabel('|sym|')
+    plt.grid(True)
+    plt.show()
 
 
 def analysis_txt():
@@ -358,6 +473,9 @@ def analysis_txt():
     cp_len = 1024
     num_symbols = 8
     symbol_len = N + cp_len
+    beta = 0.25
+    span = 8
+    sps = 1  # Matched filter applied to sampled signal
 
     txt_pth = r"D:\Documents\Coding\Python\SEUCAM\Channel Measurement\data\shakespace(short).txt"
     rx = np.load(fr"{record_dir}\txt\received_signal_shakespeare_chirp_l2_10_24k_S8diff_N4096_cp1024_distortion.npy")
@@ -441,7 +559,8 @@ def analysis_txt():
     print(f"delay {delta * effective_symbols_num * symbol_len} points "
           f"after {effective_symbols_num} symbols(N:{N} and cp{cp_len})")
 
-    plt.title("Unwrap phase with different methods")
+    # plt.title("Unwrap phase with different methods")
+    plt.title("Unwrap phase fitting line")
     plt.plot(slope * np.arange(N) + intercept, linestyle='solid', label='fitting result', color='red')
     plt.plot(slope * np.arange(N) + intercept + np.pi, linestyle='dotted', color='red', alpha=0.5)
     plt.plot(slope * np.arange(N) + intercept - np.pi, linestyle='dotted', color='red', alpha=0.5)
@@ -519,6 +638,10 @@ def analysis_txt():
     plt.show()
 
     rx_data = rx[ofdm_start + num_symbols * (N + cp_len) + delay:]
+    # Apply RRC matched filter to data part
+    # h = rrc(beta, span, sps)
+    # rx_data = lfilter(h, 1.0, rx_data)
+    # rx_data /= np.max(np.abs(rx_data))  # Normalize
     symbols = get_symbols(record=rx_data, N=N, cp_len=cp_len)
     received_bits = list()
     emit_bits = get_bits_from_file(txt_pth)
