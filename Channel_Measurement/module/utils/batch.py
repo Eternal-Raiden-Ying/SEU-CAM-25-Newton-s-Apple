@@ -472,10 +472,52 @@ def analyze_pilots(symbols_td: np.ndarray,
                    clockwise: bool = False,
                    symbols_fd: np.ndarray | None = None) -> Dict[str, np.ndarray]:
     """
-    分析导频（前导/comb）质量：
-      - 若提供 H_pred，则 q 使用 H_pred 通过 _pilot_quality 计算；
-      - 否则：q 退化为用 Hf 近似预测（兼容旧调用；建议外部传 H_pred 以获得“非同源”的质量评估）。
-    其他指标（snr/ber/ser/sigma）维持原先基于 Hf 的计算。
+        分析前导/comb 导频在“非同源等化”条件下的质量与误码指标。
+        典型用法：对每个导频符号，传入该导频的时域符号 `symbols_td`（或已准备好的频域符号 `symbols_fd`），
+        以及用于等化的“非同源”信道估计/预测 `Hf`（来自上一段参考外推等），并以频域参考 `pilot_ref`
+        作为理想星座，计算 SNR（中位数）、质量分数 q、MAD 估计的 σ_r/σ_i、以及 BER/SER。
+
+        功能概述：
+            1) 若提供 `symbols_fd`，直接在 DATA_BINS 上取子带作为 Xd；
+             否则执行 Xf = FFT(symbols_td) / Hf，再在 DATA_BINS 上取子带得到 Xd。
+            2) 用参考星座 Rd = pilot_ref[:, DATA_BINS] 计算逐子载波 SNR（基于 EVM），并取中位数(dB)。
+            3) 将 SNR(dB) 通过 sigmoid 压缩为质量分数 q ∈ (0,1)。
+            4) 对 Xd 做 QPSK 硬判（_qpsk_hard），以误差的 MAD 估计 σ_r/σ_i，并换算 Es/N0（_esno_from_sigmas）。
+            5) 使用 QPSK_reflection 提取比特，与参考比特比较，得 BER 与 SER。
+
+        参数：
+        symbols_td : np.ndarray，形状 [ns, N]
+                     时域导频 OFDM 符号（已去 CP）。当 `symbols_fd` 提供时可为占位，不参与计算。
+        Hf         : np.ndarray，形状 [ns, N]
+                     对应导频的“非同源”信道估计/预测（用于等化，避免同源高估质量）。
+                     若传入与该导频同源的 Hf（由同一导频估计），则 q/SNR 可能被乐观估计。
+        pilot_ref  : np.ndarray，形状 [ns, N]
+                     频域参考导频（理想星座，逐符号一帧），用于计算 SNR/EVM 与 BER/SER。
+        DATA_BINS  : np.ndarray，形状 [Nd]
+                     有效子载波索引；结果在这些子载波上统计。
+        mode       : str，默认 "front"
+                     标记来源（如 "front"/"comb"），本函数内部不分支，仅作上层区分用途。
+        clockwise  : bool，默认 False
+                     QPSK 位映射方向，传给 QPSK_reflection，需与发端保持一致。
+        symbols_fd : Optional[np.ndarray]，形状 [ns, N]
+                     可选，若已在外部完成 FFT/等化，传入希望直接评估的频域符号序列；
+                     函数将直接在 DATA_BINS 上切片：Xd = symbols_fd[:, DATA_BINS]，不再使用 `Hf` 参与等化。
+
+        返回：
+        dict[str, np.ndarray]，各字段均为长度 ns 的一维数组：
+            - "snr_db_med" : 每符号的 SNR 中位数（dB），由 per-SC EVM 推得后取中位数。
+            - "esno_db"    : 由误差 MAD 估计的 Es/N0（dB），基于 σ_r/σ_i。
+            - "q"          : 质量分数 ∈ (0,1)，定义为 sigmoid((snr_db_med - 5) / 2)。
+            - "sigma_r"    : 误差在 I 轴上的 MAD 标准差估计。
+            - "sigma_i"    : 误差在 Q 轴上的 MAD 标准差估计。
+            - "ber"        : 基于 QPSK_reflection 的比特误码率（每两个比特为一符号）。
+            - "ser"        : 符号误码率（对每两个比特聚合后任一位错即计错）。
+
+        注意：
+            - 为得到有意义的 q/SNR，请确保传入的 Hf 为“非同源”预测（例如由上一参考外推到本导频处的 H_pred），
+            而非用本导频自身估计出来的 Hf；同源等化会过度乐观。
+            - 若你已外部完成 FFT/等化并通过 `symbols_fd` 传入，本函数不会再使用 `Hf` 做除法，请确保
+            `symbols_fd` 的语义与 Rd 一致（即与 pilot_ref 同步对齐）。
     """
     pilot_ref = np.asarray(pilot_ref)
     Rd = pilot_ref[:, DATA_BINS]

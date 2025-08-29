@@ -21,3 +21,4 @@ from .encode import *
 from .batch import *
 from .synchronize import *
 from .io_interface import *
+from .print_aid import *

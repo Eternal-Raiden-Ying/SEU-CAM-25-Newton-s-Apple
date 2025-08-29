@@ -27,27 +27,38 @@ if __name__ == "__main__":
         'data_constellation':               False,
         'unwrap':                           False,
         'received_signal':                  False,
-        'evm_vs_sub_carr':                  True,
-        'BER_show':                         True,
-        'snr_time_pilot':                   True,  # 导频阶段的平均 SNR(随符号)曲线
-        'snr_time_comb':                    True,
-        'snr_time_data':                    True,  # 数据阶段（判决导向统计）的 SNR(随符号)曲线
-        'snr_over_sc':                      True,  # 跨子载波的平均 SNR 曲线
+        'BER_show':                         False,
+        'snr_time_pilot':                   False,  # 导频阶段的平均 SNR(随符号)曲线
+        'snr_time_comb':                    False,
+        'snr_time_data':                    False,  # 数据阶段（判决导向统计）的 SNR(随符号)曲线
+        'snr_over_sc':                      False,  # 跨子载波的平均 SNR 曲线 (data symbol)
     }
 
     args = argparse.Namespace(
+        # basic param
         fs=48000, N=8192, cp_len=1024, num_pilot=8,
         chirp_len=2, chirp_l=10, chirp_h=24000,
+        # chirp param
         data_start=409, data_tail=409,
+        # comb param
         ITERATION=10, COMB_PILOT_SEED_BASE=128,
+        # groundtruth
         groundtruth=True, head_bit=0,
         tx_file_path=r"D:\Documents\Coding\Python\SEUCAM\Channel Measurement\temp\Jossy origin.tiff",
+        # scrambler param
         scrambler_seed=256, scrambler_mode='random', scrambler_bitwidth=None, clockwise=False,
+        # ldpc param
         ldpc_standard="802.11n", ldpc_rate="1/2", ldpc_z=27, ldpc_ptype="A",
         ldpc_device="cuda", ldpc_llr_clip=20.0, ldpc_max_iter=200,
         ldpc_verbose=False, ldpc_log_every=1, ldpc_check_every=1,
         ldpc_microbatch=256, ldpc_batch=512,
-        plot=True, plot_opt=plot_opt
+        # CPE PLL param
+        pll_alpha=0.15, pll_snr_th_d=6.0,
+        pll_alpha_min=0.05, pll_alpha_max=0.50,
+        pll_snr_min_db=3.0, pll_snr_max_db=10.0,
+        pll_beta=0.9, pll_snr_mid_db=6.0, pll_snr_scale=4.0,
+        # plot settings
+        plot=False, plot_opt=plot_opt
     )
 
     rx = np.load(rx_pth)
