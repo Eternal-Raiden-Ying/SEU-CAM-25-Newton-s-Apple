@@ -1,5 +1,6 @@
 import sys
 import os
+import math
 import numpy as np
 import sounddevice as sd
 import matplotlib.pyplot as plt
@@ -27,13 +28,12 @@ try:
     import ldpc  # from ldpc_jossy/py
 except Exception as e:
     raise ImportError(
-        f"无法导入 ldpc 包：{e}\\n"
+        f"无法导入 ldpc 包：{e}\n"
         f"请检查 LDPC_PY_PATH 是否指向 ldpc_jossy/py 目录，并且包含 __init__.py。"
     )
 
 LDPC_STANDARD = '802.11n'
-# LDPC_RATE = '1/2'
-LDPC_RATE = '3/4'
+LDPC_RATE = '1/2'
 LDPC_Z = 27
 LDPC_PTYPE = 'A'  # only for 802.16 rate 2/3 or 3/4
 
@@ -44,6 +44,13 @@ data_dir = os.path.join(project_dir, "Channel Measurement/data")
 TXT_INPUT_PATH = r"D:\Pycharm\SEU-CAM-25-Newton-s-Apple\Channel Measurement\data\shakespace_poem_middle.txt"
 TIFF_INPUT_PATH = r"D:\Pycharm\SEU-CAM-25-Newton-s-Apple\Channel Measurement\data\Jossy origin.tiff"
 
+# === 与 Tx 对齐的重要常量（新增/核对） ===
+NUM_INIT_PILOTS = 8          # 起始 OFDM 导频个数
+HEADER_BITS     = 64         # 64-bit 文件头（MSB-first）
+SCRAMBLE_SEED   = 256        # scrambler_random 的种子
+COMB_ITERATION  = 10         # comb pilot 周期
+COMB_PILOT_SEED_BASE = 128   # comb pilot 的 seed 起点（与Tx一致）
+
 fs = 48000
 N = 8192  # FFT size
 POS_BINS = np.arange(1, N // 2)  # 正频 1..4095
@@ -51,32 +58,21 @@ DATA_START = 409
 DATA_TAIL = 409  # TX 实际用于数据/导频的前缀子载波数
 DATA_BINS = POS_BINS[DATA_START:-DATA_TAIL]  # 这些才是有效子载波
 cp_len = 1024
-num_symbols = 8
+num_symbols = NUM_INIT_PILOTS
 symbol_len = N + cp_len
-
-# —— comb 导频参数（与发端一致）——
-ITERATION = 10                # 每 5 个数据 OFDM 符号后插 1 个导频
-COMB_PILOT_SEED_BASE = 128    # 发端 OFDM_modulate_data_with_comb 的 seed 起点
 
 # --- Channel blending config ---
 CHAN_BLEND_MODE = 'distance'          # 'fixed'（固定权重）或 'distance'（按时间距离加权）
-CHAN_BLEND_WEIGHTS = (0.4, 0.6)    # (from_start, from_nearest) 例如 40% + 60%
-USE_DD_CPE = True                  # 是否开启判决导向 CPE 二次校正
-
+CHAN_BLEND_WEIGHTS = (0.4, 0.6)       # (from_start, from_nearest)
+USE_DD_CPE = True                     # 判决导向 CPE（后面我们用PLL替代，保持兼容开关）
 
 def correct_H_f(origin_H_f, delta, N, index, symbol_len, fixed_phase_shift_factor=0.0):
-    """
-    fixed_phase_shift_factor: 每 OFDM 符号的常相位步进（phi_step），单位：弧度/符号
-    """
-    # 保持你原有的子载波索引顺序，避免与 H_f 的频率排列不一致
     k = np.linspace(-N//2, N//2, N, endpoint=False, dtype=np.int32)
     k = np.concatenate([k[N//2:], k[:N//2]])
-    # 线性相位（与子载波索引 k 成正比）+ 每符号常相位
     phase_k = (-2 * np.pi / N) * delta * index * symbol_len * k
     phi = fixed_phase_shift_factor * index
     corrected_H_f = origin_H_f * np.exp(1j * (phase_k + phi))
     return corrected_H_f
-
 
 def qpsk_llrs_from_constellation(constellation, *, clockwise=False,
                                  llr_clip=20.0, k_sigma_clip=4.0,
@@ -144,26 +140,20 @@ def generate_pilot_symbol(N, seed=256):
     return X_freq
 
 def fit_drift_between(H_start, H_end, gap, *, N=N, symbol_len=None, return_phi=False):
-    """
-    由相隔 gap 个 OFDM 的两次信道估计，拟合得到：
-      - delta：每符号的线性相位斜率（对应 SFO/CFO 残差）
-      - phi_step：每符号公共相位步进（CPE）
-    """
     if symbol_len is None:
         raise ValueError("symbol_len must be provided")
     phase_shift = H_end / H_start
     x_auto, auto_unwrapped_phase, _ = phase_unwrap_auto(data=phase_shift )
     slope, intercept = fitting_line(x=x_auto, y=auto_unwrapped_phase, filter=True, residual_th=1.5)
 
+    # plot_unwrap_phase_fitting_zoom(phase_shift, slope, intercept, x_auto, auto_unwrapped_phase, N,window=100)
     # plot_unwrap_phase_fitting(phase_shift, slope, intercept, x_auto, auto_unwrapped_phase, N)
 
     delta = slope / (symbol_len * (-2 * np.pi) / N) / gap
-    phi_step = intercept / gap  # 每“一个”符号的常相位步进
-
+    phi_step = intercept / gap
     if return_phi:
         return float(delta), float(phi_step)
     return float(delta)
-
 
 def plot_unwrap_phase_fitting(phase_shift, slope, intercept, x_auto, auto_unwrapped_phase, N):
     phase_shift = np.concatenate([phase_shift[N//2:],phase_shift[:N//2]])
@@ -180,6 +170,37 @@ def plot_unwrap_phase_fitting(phase_shift, slope, intercept, x_auto, auto_unwrap
     plt.ylabel("unwrapped phase")
     plt.legend()
     plt.show()
+
+def plot_unwrap_phase_fitting_zoom(phase_shift, slope, intercept,
+                                   x_auto, auto_unwrapped_phase, N, window=20):
+    """
+    只画出 0 点附近的解缠相位拟合图
+    window: 显示范围（采样点数），例如 20 表示 [-20, 20]
+    """
+    phase_shift = np.concatenate([phase_shift[N // 2:], phase_shift[:N // 2]])
+    plt.title("Unwrap phase fitting (zoom around 0)")
+    x = np.linspace(-N // 2, N // 2, N, endpoint=False)
+
+    # 画线
+    plt.plot(x, np.angle(phase_shift), color='orange', label='original', alpha=0.5)
+    plt.plot(x, slope * x + intercept, linestyle='solid', label='fitting result', color='red')
+    plt.plot(x, slope * x + intercept + np.pi, linestyle='dotted', color='red', alpha=0.5)
+    plt.plot(x, slope * x + intercept - np.pi, linestyle='dotted', color='red', alpha=0.5)
+    plt.scatter(x_auto, auto_unwrapped_phase, label='auto_unwrap', s=1,
+                color='green', marker='*', alpha=0.5)
+
+    # 画辅助线
+    plt.axhline(0, linestyle='dotted', color='black', linewidth=2)
+    plt.axvline(0, linestyle='dotted', color='black', linewidth=2)
+
+    plt.xlabel("sampling point")
+    plt.ylabel("unwrapped phase")
+    plt.legend()
+
+    # 只显示 0 附近
+    plt.xlim(-window, window)
+    plt.show()
+
 
 def plot_original_constellations(symbols, H_fs, pilot, effective_symbols_num, N, pic_idx, n_rows, n_cols):
     fig, axes = plt.subplots(n_rows, n_cols, figsize=(10, 6))
@@ -215,22 +236,6 @@ def plot_received_signal(rx, ofdm_start, num_symbols, N, cp_len, delay):
     plt.axvline(ofdm_start + num_symbols * (N + cp_len) + delay, linestyle='dotted', color='red')
     plt.show()
 
-def plot_data_constellations(symbols, origin_H_f, delta, fixed_phase_shift_factor, emit_constellations, N, pic_idx, n_rows, n_cols, symbol_len, num_symbols):
-    fig, axes = plt.subplots(n_rows, n_cols, figsize=(10, 12))
-    for i, index in enumerate(pic_idx):
-        corrected_H_f = correct_H_f(origin_H_f, delta, N, index+num_symbols, symbol_len, fixed_phase_shift_factor)
-        constellation = get_constellation(symbols=symbols[index], H_f=corrected_H_f,
-                                         approximation=non_approximate)
-        constellation = constellation[DATA_START:-DATA_TAIL]
-        ax = axes[i // n_cols, i % n_cols]
-        emit_ref = \
-        emit_constellations.ravel()[:emit_constellations.size // (DATA_BINS.size) * (DATA_BINS.size)].reshape(-1, (DATA_BINS.size))[index]
-        draw_constellation_map(received=constellation, emit_pilot=emit_ref, ax=ax,
-                               title=f"constellation{index + 1}")
-    fig.suptitle("data constellation")
-    plt.tight_layout()
-    plt.show()
-
 def plot_evm_vs_sub_carrier_idx(evm_avg:np.ndarray):
     evm_mean_total = np.mean(evm_avg)
     plt.figure(figsize=(10, 4))
@@ -246,57 +251,31 @@ def _blend_weights(i, start_idx, near_idx, mode='fixed', weights=(0.4, 0.6)):
     if mode == 'fixed':
         w1, w2 = weights
     else:
-        # 距离越近权重越大：w ∝ 1/(distance+eps)
-        d1 = max(1, i - start_idx)     # 与段起点（通常是上一块导频或数据起点）的距离
-        d2 = max(1, abs(i - near_idx)) # 与最近导频的距离
+        d1 = max(1, i - start_idx)
+        d2 = max(1, abs(i - near_idx))
         inv1, inv2 = 1.0/d1, 1.0/d2
         s = inv1 + inv2
         w1, w2 = inv1/s, inv2/s
     return float(w1), float(w2)
 
-def _estimate_cpe_dd(eq_constellation):
-    """
-    判决导向公共相位误差估计：用硬判做参考，然后对齐。
-    仅对 QPSK 设计，其他调制可扩展。
-    """
-    s = np.asarray(eq_constellation).ravel()
-    # QPSK 硬判星座（±1±j)/√2
-    hard = (np.sign(s.real) + 1j*np.sign(s.imag)) / np.sqrt(2)
-    # 估计接收与硬判的平均相位差
-    # 取 sum(s * hard.conj()) 的相位，其负值作为需补偿的旋转角
-    phi = -np.angle(np.vdot(hard, s))
-    return float(phi)
-# === NEW: metrics helpers ===
+# === metrics helpers ===
 def evm_and_snr(received: np.ndarray, reference: np.ndarray):
-    """
-    基于已均衡星座计算每个子载波的 RMS EVM 和 SNR。
-    约定 reference 的平均功率为 1（与现有 QPSK 映射一致）。
-    返回:
-      evm_rms  : 每子载波 EVM_rms
-      snr_lin  : 每子载波 SNR (linear)  ≈ 1 / (EVM_rms^2)
-      snr_db   : 每子载波 SNR (dB)      = -20*log10(EVM_rms)
-    """
     ref = np.asarray(reference).ravel()
     rx  = np.asarray(received).ravel()
     err = rx - ref
-    # 每个子载波的 RMS EVM
-    # 这里对单个 OFDM 符号，直接 |err|/|ref|，QPSK |ref|≈1，无需再分段平均
     evm_rms = np.abs(err) / (np.abs(ref) + 1e-12)
     evm_rms = np.maximum(evm_rms, 1e-9)
     snr_lin = 1.0 / (evm_rms ** 2)
     snr_db  = 10.0 * np.log10(snr_lin)
     return evm_rms, snr_lin, snr_db
 
-# ===  pilot/data 质量度量与融合权重 ===
 def pilot_quality_from_constellation(eq_const, ref):
-    """用中位数 SNR(dB) 作为该 pilot 的质量指标，返回线性质量 q（越大越好）。"""
     evm_rms, _, snr_db = evm_and_snr(eq_const, ref)
     snr_med_db = float(np.median(snr_db))
-    q = 10.0 ** (snr_med_db / 20.0)  # 线性质量
+    q = 10.0 ** (snr_med_db / 20.0)
     return q, snr_med_db
 
 def blend_weights_quality(i, start_idx, near_idx, q_start=1.0, q_near=1.0):
-    """w ∝ q/(distance+eps)；距离近且质量高者权重大。"""
     d1 = max(1, i - start_idx)
     d2 = max(1, abs(i - near_idx))
     s1 = (q_start) / d1
@@ -304,18 +283,55 @@ def blend_weights_quality(i, start_idx, near_idx, q_start=1.0, q_near=1.0):
     s  = s1 + s2
     return float(s1/s), float(s2/s)
 
-# ===  MMSE 收缩（在 ZF 输出上做一次等效 MMSE） ===
 def apply_mmse_shrinkage(eq_constellation, H_used_data_bins, sigma_r, sigma_i):
-    """
-    你当前 get_constellation ≈ ZF：S_hat = Y/H。
-    MMSE 等效可在 ZF 输出上乘 |H|^2/(|H|^2+N0)，其中 N0 ≈ 2*sigma^2（QPSK, Es=1）。
-    """
     sigma2 = 0.5 * (sigma_r**2 + sigma_i**2)
     N0 = 2.0 * sigma2 + 1e-12
-    G = (np.abs(H_used_data_bins)**2) / (np.abs(H_used_data_bins)**2 + N0)   # shape = [#data_subcarriers]
+    G = (np.abs(H_used_data_bins)**2) / (np.abs(H_used_data_bins)**2 + N0)
     return eq_constellation * G
 
-# ===  一阶 PLL 型 DD-CPE 跟踪器 ===
+# === NEW: ground-truth helpers ===
+def _u64_to_bits_msb(n):
+    b = np.zeros(64, dtype=np.uint8)
+    for k in range(64):
+        b[k] = (n >> (63 - k)) & 1
+    return b
+
+def _build_gt(tx_bits_path, data_bins_size, *, scramble_seed=256):
+    """
+    构造与 TX 完全一致的 data 参考（含 64-bit 文件头）：
+      [64-bit 头 | payload] --(scrambler_random)-->  扰码
+                        └──> LDPC 编码 → 串并 → QPSK → emit_constellations
+    返回:
+      info_bits_full   : 头+payload（扰码前）
+      emit_bits_ldpc   : 编码后的比特流
+      emit_const       : 参考星座矩阵，shape=[num_data_tx, data_bins_size]
+      num_data_tx      : 实际 data OFDM 个数（包含头部对应的码块）
+    """
+    payload_bits = get_bits_from_file(tx_bits_path).astype(np.uint8)
+    header_bits  = _u64_to_bits_msb(int(payload_bits.size))
+    info_bits_full = np.concatenate([header_bits, payload_bits])           # 头在前
+    info_bits_scr  = scrambler_random(info_bits_full, seed=scramble_seed)  # 与 TX 一致：先拼，再扰
+
+    emit_bits_ldpc, (K, Ncw) = ldpc_encode_bits(info_bits_scr)
+
+    # 与 TX 的并行长度一致：(data_bins + 1) * 2；只取前 data_bins*2 位映射到有效子载波
+    per_ofdm_bits  = (data_bins_size + 1) * 2
+    mat_bits       = serial_to_parallel(emit_bits_ldpc, N=per_ofdm_bits)          # [num_data_tx, per_ofdm_bits]
+    mat_effective  = mat_bits[:, :data_bins_size * 2]                             # 丢掉那“+1”对应的2比特
+    emit_const     = QPSK_mapping(mat_effective)                                  # [num_data_tx, data_bins_size]
+    num_data_tx    = emit_const.shape[0]
+    return info_bits_full, emit_bits_ldpc, emit_const, num_data_tx
+
+def _make_data_index_map(data_pos, num_data_tx):
+    """
+    只保留前 num_data_tx 个数据符号，返回:
+      data_pos_trunc: 截断后的 data_pos (长度 = num_data_tx)
+      data_index_map: {全局OFDM索引 -> 行号(0..num_data_tx-1)}
+    """
+    data_pos_trunc = data_pos[:num_data_tx]
+    data_index_map = {int(sym_idx): int(row) for row, sym_idx in enumerate(data_pos_trunc)}
+    return data_pos_trunc, data_index_map
+
 class DD_CPE_PLL:
     def __init__(self, alpha=0.15, snr_th_db=6.0):
         self.theta = 0.0
@@ -326,30 +342,17 @@ class DD_CPE_PLL:
         s = np.asarray(const).ravel()
         if hard is None:
             hard = (np.sign(s.real) + 1j*np.sign(s.imag)) / np.sqrt(2)
-        # === FIX: 误差符号要为“正” ===
         e = np.angle(np.vdot(hard, s * np.exp(-1j * self.theta)))
-        # === 保护：低 SNR 或跳变过大时不更新 ===
         if (snr_med_db >= self.snr_th_db) and (abs(e) < np.pi/2):
             self.theta += self.alpha * e
-        # wrap 到 [-pi, pi]，避免积累溢出
         self.theta = (self.theta + np.pi) % (2*np.pi) - np.pi
         return s * np.exp(-1j * self.theta)
 
-# ===  按子载波 SNR 缩放 LLR（坏频点半擦除） ===
 def llr_scale_from_snr(snr_db_per_sc, lo=2.0, hi=10.0, min_scale=0.3, max_scale=1.0):
-    """
-    把每个子载波的 SNR(dB) 映射到 [min_scale, max_scale]，线性分段。
-    SNR<=lo -> min_scale；SNR>=hi -> max_scale；中间线性插值。
-    """
     s = (np.clip(snr_db_per_sc, lo, hi) - lo) / (hi - lo + 1e-9)
     return min_scale + (max_scale - min_scale) * s
 
 def esno_from_sigmas(sig_r: float, sig_i: float):
-    """
-    利用 qpsk_llrs_from_constellation 的 robust sigma 估计 Es/N0。
-    对 QPSK（单位能量 Es=1）有：Es/N0 = 1 / (2 * σ^2),
-    其中 σ^2 取实部虚部的平均方差。
-    """
     sigma2 = 0.5 * (sig_r**2 + sig_i**2)
     esno_lin = 1.0 / (2.0 * sigma2 + 1e-12)
     esno_db  = 10.0 * np.log10(esno_lin)
@@ -374,45 +377,47 @@ def plot_snr_over_subcarrier(snr_db_per_sc: np.ndarray, title="SNR over subcarri
     plt.show()
 
 def plot_pre_post_ber(pre_ber: np.ndarray, post_ber: np.ndarray):
-    """
-    画出 pre_ber 和 post_ber 的变化情况
-    1. pre_ber 和 post_ber 单独的曲线图
-    2. pre_ber 和 post_ber 叠加在同一张图
-    """
     indices = np.arange(len(pre_ber))
-
-    # --------- 分开画 ---------
-    fig, axs = plt.subplots(2, 1, figsize=(10, 6), sharex=True)
-
-    axs[0].plot(indices, pre_ber, label="pre_ber", color="blue")
-    axs[0].set_ylabel("pre_ber")
-    axs[0].set_title("pre_ber vs index")
-    axs[0].grid(True)
-
-    axs[1].plot(indices, post_ber, label="post_ber", color="red")
-    axs[1].set_xlabel("Index")
-    axs[1].set_ylabel("post_ber")
-    axs[1].set_title("post_ber vs index")
-    axs[1].grid(True)
-
-    plt.tight_layout()
-    plt.show()
-
-    # --------- 叠加画 ---------
-    plt.figure(figsize=(10, 4))
+    fig, axs = plt.subplots(2, 1, figsize=(17, 10), sharex=True)
+    axs[0].plot(indices, pre_ber, label="pre_ber", color="blue"); axs[0].set_ylabel("pre_ber"); axs[0].set_title("pre_ber vs index"); axs[0].grid(True)
+    axs[1].plot(indices, post_ber, label="post_ber", color="red"); axs[1].set_xlabel("Index"); axs[1].set_ylabel("post_ber"); axs[1].set_title("post_ber vs index"); axs[1].grid(True)
+    plt.tight_layout(); plt.show()
+    plt.figure(figsize=(15, 6))
     plt.plot(indices, pre_ber, label="pre_ber", color="blue")
     plt.plot(indices, post_ber, label="post_ber", color="red")
-    plt.xlabel("Index")
-    plt.ylabel("BER")
-    plt.title("pre_ber & post_ber vs index")
-    plt.legend()
-    plt.grid(True)
-    plt.show()
+    plt.xlabel("Index"); plt.ylabel("BER"); plt.title("pre_ber & post_ber vs index"); plt.legend(); plt.grid(True); plt.show()
 
-def analysis_txt(plot=False, plot_opt=None):
-    global pre_ber, post_ber
+# === 解析 64-bit 头（MSB-first） ===
+def u64_from_bits_msb(bits64):
+    b = ''.join('1' if int(x) else '0' for x in np.asarray(bits64, dtype=np.uint8).tolist())
+    return int(b, 2)
+
+def maybe_gt_cw(emit_bits_ldpc, start_blocks, end_blocks, Ncw, ground_truth: bool):
+    """仅在 ground_truth=True 且 emit_bits_ldpc 可用时返回 GT 码字矩阵，否则返回 None。"""
+    if (not ground_truth) or (emit_bits_ldpc is None):
+        return None
+    nblocks = max(0, int(end_blocks - start_blocks))
+    if nblocks == 0:
+        return None
+    start = int(start_blocks * Ncw)
+    end   = int(end_blocks   * Ncw)
+    return build_gt_codewords(emit_bits_ldpc[start:end], nblocks, Ncw)
+
+def build_gt_codewords(emit_bits_ldpc: np.ndarray, nblocks: int, Ncw: int) -> np.ndarray:
+    """
+    把编码后的比特流切成 (nblocks, Ncw) 的“真值码字矩阵”。
+    若长度不足（理论上不该发生），则右侧用 0 填充。
+    """
+    total = nblocks * Ncw
+    stream = np.asarray(emit_bits_ldpc, dtype=np.uint8).ravel()[:total]
+    if stream.size < total:
+        pad = np.zeros(total - stream.size, dtype=np.uint8)
+        stream = np.concatenate([stream, pad], axis=0)
+    return stream.reshape(nblocks, Ncw)
+
+def analysis_txt(plot=False, plot_opt=None, ground_truth=True, tx_bits_path=TXT_INPUT_PATH):
     rx = np.load(
-        fr"D:\Pycharm\SEU-CAM-25-Newton-s-Apple\Channel Measurement\record\LDPC\received_txt_chirp_l2_10_24k_fs48k_N8192_cp1024_S8diff_R3-4_Z27_802.11n_A_random_middle_0.8_1.npy")
+        fr"D:\Pycharm\SEU-CAM-25-Newton-s-Apple\Channel Measurement\record\LDPC\received_txt_chirp_l2_10_24k_fs48k_N8192_cp1024_S8diff_R1-2_Z27_802.11n_A_random_middle_0.8_long_head_2.npy")
     pilot = np.load(
         fr"D:\Pycharm\SEU-CAM-25-Newton-s-Apple\Channel Measurement\save\pilot\pilot_different_N8192_fixed.npy")
     chirp_template = generate_chirp(fs, duration=2, f_l=10, f_h=24000)
@@ -427,7 +432,6 @@ def analysis_txt(plot=False, plot_opt=None):
     print(f"corr peak at {chirp_start}")
 
     print(f"开始提取 OFDM 符号")
-    # ofdm_start = ofdm_start - fine_tun
     rx_pilot = rx[ofdm_start: ofdm_start + num_symbols * (N + cp_len)]
 
     effective_symbols_num = num_symbols
@@ -457,19 +461,14 @@ def analysis_txt(plot=False, plot_opt=None):
 
     if plot and plot_opt['unwrap']:
         plot_unwrap_phase_fitting(phase_shift, slope, intercept, x_auto, auto_unwrapped_phase, N)
-    # Draw constellation distribution map
-    n_rows = 2
-    n_cols = 4
-    pic_num = n_rows * n_cols
-    pic_idx = np.linspace(start=0,
-                          stop=0+effective_symbols_num//(pic_num-1)*(pic_num-1),
-                          num=pic_num).astype(np.int32)
+
+    n_rows = 2; n_cols = 4; pic_num = n_rows * n_cols
+    pic_idx = np.linspace(start=0, stop=0+effective_symbols_num//(pic_num-1)*(pic_num-1), num=pic_num).astype(np.int32)
     origin_H_f = 0
     for index, H_f in enumerate(H_fs):
         origin_H_f += correct_H_f(H_f, delta, N, -index, symbol_len, fixed_phase_shift_factor=-fixed_phase_shift_factor)
-        # origin_H_f = origin_H_f + H_f
     origin_H_f /= len(H_fs)
-    # origin_H_f = H_fs[4]
+
     if plot and plot_opt['impulse_response']:
         plot_impulse_response(np.fft.ifft(origin_H_f), fs)
     if plot and plot_opt['raw_pilot_constellation']:
@@ -477,57 +476,22 @@ def analysis_txt(plot=False, plot_opt=None):
     if plot and plot_opt['corrected_pilot_constellation']:
         plot_corrected_constellations(symbols, origin_H_f, delta, intercept, pilot, effective_symbols_num, N, pic_idx, n_rows, n_cols, symbol_len, num_symbols)
 
-    # Statistical BER for pilot symbols
-    # --- 未校正 BER ---
-    received_bits = list()
-    emit_bits = QPSK_reflection(data=pilot[:effective_symbols_num, DATA_BINS]).flatten()
-    for index in range(effective_symbols_num):
-        raw_constellation = get_constellation(symbols=symbols[index, :], H_f=origin_H_f,
-                                              approximation=simple_approximate,
-                                              symbol_len=N)
-        raw_constellation = np.asarray(raw_constellation).ravel()[DATA_START:-DATA_TAIL]  # ★ 只取前3685
-        received_bits.append(QPSK_reflection(data=raw_constellation))
-    received_bits = np.array(received_bits).flatten()
-    BER = 1 - np.sum(np.equal(received_bits, emit_bits)) / received_bits.size
-    print(f"bit error rate (uncorrected):{BER * 100:.4f}%")
-
-    # --- 校正后 BER ---
-    received_bits = list()
-    for index in range(effective_symbols_num):
-        corrected_H_f = correct_H_f(origin_H_f, delta, N, index, symbol_len)
-        corrected_constellation = get_constellation(symbols=symbols[index, :], H_f=corrected_H_f,
-                                                    approximation=simple_approximate,
-                                                    symbol_len=N)
-        corrected_constellation = np.asarray(corrected_constellation).ravel()[DATA_START:-DATA_TAIL]  # ★ 只取前3685
-        received_bits.append(QPSK_reflection(data=corrected_constellation))
-    received_bits = np.array(received_bits).flatten()
-    BER = 1 - np.sum(np.equal(received_bits, emit_bits)) / received_bits.size
-    print(f"bit error rate (corrected):{BER * 100:.4f}%")
-
-    # === NEW: Pilot metrics ===
+    # Pilot SNR (略) —— 原逻辑保留
     snr_pilot_per_sym = []
     for index in range(effective_symbols_num):
         corrected_H_f = correct_H_f(origin_H_f, delta, N, index, symbol_len, fixed_phase_shift_factor)
-        # 用非近似均衡，拿到更干净的星座
         const = get_constellation(symbols=symbols[index, :], H_f=corrected_H_f,
                                   approximation=non_approximate, symbol_len=N)
         const = np.asarray(const).ravel()[DATA_START:-DATA_TAIL]
         ref   = pilot[index, DATA_BINS]
-
-        # 1) EVM/SNR（per-subcarrier；汇总成每符号平均）
         evm_rms, _, snr_db = evm_and_snr(const, ref)
-        snr_pilot_per_sym.append(float(np.median(snr_db)))  # 用中位数更鲁棒
-
-        # 2) Es/N0（用 robust sigma 得到的噪声方差估计）
+        snr_pilot_per_sym.append(float(np.median(snr_db)))
         _, st_loc = qpsk_llrs_from_constellation(const, use_mad=True)
         _, esno_db_loc = esno_from_sigmas(st_loc['sigma_r'], st_loc['sigma_i'])
-        # 便于对照
         print(f"[PILOT {index:02d}] SNR_med={np.median(snr_db):.2f} dB | Es/N0≈{esno_db_loc:.2f} dB")
-
     snr_pilot_per_sym = np.array(snr_pilot_per_sym, dtype=float)
     print(f"[PILOT] SNR over symbols: mean={snr_pilot_per_sym.mean():.2f} dB | "
           f"median={np.median(snr_pilot_per_sym):.2f} dB | min={snr_pilot_per_sym.min():.2f} dB")
-
     if plot and plot_opt.get('snr_time_pilot', False):
         plot_snr_over_time(snr_pilot_per_sym, title="Pilot SNR over OFDM symbols")
 
@@ -540,18 +504,15 @@ def analysis_txt(plot=False, plot_opt=None):
     rx_data = rx[ofdm_start + num_symbols * (N + cp_len) :]
     symbols_all = get_symbols(record=rx_data, N=N, cp_len=cp_len)
 
-    # M = 175
-    M =117
-    # M = 45
-    # M = 299
-    # M = symbols_all.shape[0]
-    pilot_pos = np.arange(ITERATION, M, ITERATION + 1, dtype=int)
+    # === M 自动 ===
+    M = symbols_all.shape[0]
+
+    pilot_pos = np.arange(COMB_ITERATION, M, COMB_ITERATION + 1, dtype=int)
     data_pos = np.setdiff1d(np.arange(M), pilot_pos)
     symbols_data = symbols_all[data_pos]
     symbols_comb_pilot = symbols_all[pilot_pos]
 
-    # === LDPC SOFT-DECODING PATH (preserve offset correction) ===
-    # === NEW: comb-aware data extraction & decoding ===
+    # === comb pilot 估计 ===
     llr_blocks = []
     src_idx_blocks = []
     sub_carr_freq_blocks = []
@@ -559,9 +520,8 @@ def analysis_txt(plot=False, plot_opt=None):
     evm_accum = np.zeros(DATA_BINS.size, dtype=float)
     count_accum = np.zeros(DATA_BINS.size, dtype=int)
 
-    # ===  accumulators for data metrics ===
-    snr_data_per_symbol = []  # 每个数据 OFDM 符号的中位数 SNR(dB)
-    snr_sc_sum = np.zeros(DATA_BINS.size)  # 跨数据符号累计各子载波 SNR
+    snr_data_per_symbol = []
+    snr_sc_sum = np.zeros(DATA_BINS.size)
     snr_sc_cnt = np.zeros(DATA_BINS.size, dtype=int)
 
     for j, comb_pilot in enumerate(symbols_comb_pilot):
@@ -570,27 +530,22 @@ def analysis_txt(plot=False, plot_opt=None):
         Hf_comb.append(Hf_p)
     Hf_comb = np.array(Hf_comb, dtype=complex) if len(Hf_comb)>0 else np.zeros((0,N), dtype=complex)
 
-    # --- after building Hf_comb ---
-    pilot_qualities = []   # 线性质量 q
-    pilot_snrdb = []       # 便于调试/打印
+    pilot_qualities = []; pilot_snrdb = []
     if len(Hf_comb) > 0:
         for j, comb_pilot in enumerate(symbols_comb_pilot):
-            # 用各自 Hf_p 把导频均衡出来
             const_p = get_constellation(symbols=comb_pilot, H_f=Hf_comb[j],
                                         approximation=non_approximate, symbol_len=N)
             const_p = np.asarray(const_p).ravel()[DATA_START:-DATA_TAIL]
             ref_p   = generate_pilot_symbol(N, seed=COMB_PILOT_SEED_BASE + j)[DATA_BINS]
             q, snr_db_med = pilot_quality_from_constellation(const_p, ref_p)
-            pilot_qualities.append(q)
-            pilot_snrdb.append(snr_db_med)
+            pilot_qualities.append(q); pilot_snrdb.append(snr_db_med)
         pilot_qualities = np.array(pilot_qualities, dtype=float)
         pilot_snrdb     = np.array(pilot_snrdb, dtype=float)
 
     # 以“前置 num_symbols 个导频”的最后一块为区间起点
     H_ref = H_fs[-1]
-    prev_ref_idx = -1  # 参考是在数据段开始之前一拍
-
-    seg_params = []  # (start_idx, end_idx, H_start, delta_j, phi_step_j)
+    prev_ref_idx = -1
+    seg_params = []
     if len(Hf_comb) > 0:
         for j, pidx in enumerate(pilot_pos):
             gap = (pidx - prev_ref_idx)
@@ -603,43 +558,50 @@ def analysis_txt(plot=False, plot_opt=None):
     else:
         seg_params.append((-1, M, H_fs[-1], float(delta), float(fixed_phase_shift_factor)))
 
-    idx = np.array([(s + e) / 2 for s, e,_, d,_ in seg_params])
-    delta_idx = np.array([d for s, e,_, d,_ in seg_params])
-
     for s, e,h, d,_ in seg_params:
-        print(f"data_pilot_number:{(s+1)//10},start:{s},end: {e},delat: {d}")
-        #plot_impulse_response(np.fft.ifft(h),fs)
+        print(f"data_pilot_number:{(s+1)//COMB_ITERATION},start:{s},end: {e},delat: {d}")
 
-    # 构造插值函数（线性为例，可改成 'quadratic', 'cubic'）
-    # f = interp1d(idx, delta_idx, kind='linear', fill_value='extrapolate')
+    # === GT 构建（仅在 ground_truth=True 时） ===
+    emit_bits = emit_bits_ldpc = emit_constellations = None
+    num_data_tx = None
+    if ground_truth:
+        emit_bits, emit_bits_ldpc, emit_constellations, num_data_tx = _build_gt(
+            tx_bits_path, data_bins_size=DATA_BINS.size, scramble_seed=SCRAMBLE_SEED
+        )
+        # 用 num_data_tx 截断 data_pos，建立映射，防止越界
+        data_pos_trunc, data_index_map = _make_data_index_map(data_pos, num_data_tx)
+    else:
+        data_pos_trunc, data_index_map = data_pos, {}  # 用不到映射
+
+    # === 初始化 CPE PLL ===
+    cpe_pll = DD_CPE_PLL(alpha=0.15, snr_th_db=6.0)
+
     if plot and plot_opt['data_constellation']:
         n_rows = 4
         n_cols = 4
         pic_num = n_rows * n_cols
         pic_idx = np.linspace(start=0,
-                              stop=0 + data_pos.size // (pic_num - 1) * (pic_num - 1),
+                              stop=0 + data_pos_trunc.size // (pic_num - 1) * (pic_num - 1),
                               num=pic_num).astype(np.int32)
-        pic_idx = data_pos[pic_idx]
+        pic_idx = data_pos_trunc[pic_idx]
         fig, axes = plt.subplots(n_rows, n_cols, figsize=(10, 12))
 
-    emit_bits = get_bits_from_file(TXT_INPUT_PATH)
-    # emit_bits = get_bits_from_file(TIFF_INPUT_PATH)
-    # emit_bits = scrambler(emit_bits, seed=0b1111111)
-    emit_bits = scrambler_random(emit_bits, seed=256)
-    emit_bits_ldpc, (K, Ncw) = ldpc_encode_bits(emit_bits , rate=LDPC_RATE)
-    emit_constellations = QPSK_mapping(serial_to_parallel(emit_bits_ldpc, N=(DATA_BINS.size + 1) * 2))
-
-    # === 初始化 CPE PLL ===
-    cpe_pll = DD_CPE_PLL(alpha=0.15, snr_th_db=6.0)
+    # === 主循环：构造所有 LLR（不改你的主体流程） ===
     for (start_idx2, end_idx2_, H_start, delta_j, phi_step_j) in seg_params:
         end_inclusive = end_idx2_ - 1
         for i in range(start_idx2 + 1, min(end_inclusive, M - 1) + 1):
+            if i not in data_pos:
+                continue
+            if i in processed_set:  # ★ 避免重复处理 Step1 用过的符号
+                continue
+            if ground_truth and (i not in data_index_map):
+                continue
 
-            # 1) 从“段起点参考”（H_start）外推到第 i 个数据符号
+            # 1) 从段起点外推
             dt = i - start_idx2
             H_from_start = correct_H_f(H_start, delta_j, N, dt, symbol_len, fixed_phase_shift_factor=phi_step_j)
 
-            # 2) 从“最近 comb 导频参考”外推到第 i 个数据符号
+            # 2) 从最近 comb 导频外推
             if len(pilot_pos) > 0:
                 j_near = int(np.argmin(np.abs(pilot_pos - i)))
                 idx_near = pilot_pos[j_near]
@@ -649,7 +611,7 @@ def analysis_txt(plot=False, plot_opt=None):
             else:
                 H_from_near = H_from_start
 
-            # 3) 融合（固定 40/60 或按距离加权）
+            # 3) 融合
             if len(pilot_pos) > 0:
                 q_start = pilot_qualities[j_near - 1] if (j_near - 1) >= 0 else pilot_qualities[0]
                 q_near = pilot_qualities[j_near]
@@ -664,49 +626,56 @@ def analysis_txt(plot=False, plot_opt=None):
                                               approximation=non_approximate, symbol_len=N)
             constellation = np.asarray(constellation).ravel()[DATA_START:-DATA_TAIL]
 
-            # --- 先用“未跟踪、未收缩”的星座给 PLL 门限估 SNR ---
-            ref_sc = emit_constellations[np.where(data_pos == i)[0]].ravel()
-            snr_med_for_pll = float(np.median(evm_and_snr(constellation, ref_sc)[2]))
+            # --- 用发端参考（文件头+payload都在 emit_constellations 里） ---
+            if ground_truth:
+                ref_sc = emit_constellations[data_index_map[i]].ravel()
+                snr_med_for_pll = float(np.median(evm_and_snr(constellation, ref_sc)[2]))
+            else:
+                hard = (np.sign(constellation.real) + 1j * np.sign(constellation.imag)) / np.sqrt(2)
+                snr_med_for_pll = float(np.median(evm_and_snr(constellation, hard)[2]))
 
-            # --- 先做 CPE PLL（单环），把慢漂移对齐 ---
+            # PLL
             constellation = cpe_pll.step(constellation, snr_med_db=snr_med_for_pll)
 
-            # --- 再做 MMSE 收缩（这时 σ 的估计更稳，也不会触发恶性反馈） ---
+            # MMSE
             _, st_tmp = qpsk_llrs_from_constellation(constellation, use_mad=True)
             H_used_bins = H_used[DATA_BINS]
             constellation = apply_mmse_shrinkage(constellation, H_used_bins, st_tmp['sigma_r'], st_tmp['sigma_i'])
 
-            # if USE_DD_CPE:
-            #     phi_dd = _estimate_cpe_dd(constellation)
-            #     constellation *= np.exp(1j * phi_dd)  # 调回去
+            if ground_truth:
+                error = constellation - emit_constellations[data_index_map[i]]
+                evm_sym = np.abs(error) ** 2 / (np.abs(emit_constellations[data_index_map[i]]) ** 2 + 1e-12)
+                evm_accum += evm_sym.flatten()
+                count_accum += 1
 
-            error = constellation - emit_constellations[np.where(data_pos == i)[0]]
-            evm_sym = np.abs(error) ** 2 / np.abs(emit_constellations[np.where(data_pos == i)[0]]) ** 2
-            evm_accum += evm_sym.flatten()
-            count_accum += 1
+                evm_rms_sym, _, snr_db_sym = evm_and_snr(constellation, ref_sc)
+                snr_data_per_symbol.append(float(np.median(snr_db_sym)))
+                snr_sc_sum += snr_db_sym
+                snr_sc_cnt += 1
+                w_sc = llr_scale_from_snr(snr_db_sym, lo=2.0, hi=10.0, min_scale=0.4, max_scale=1.0)
+            else:
+                w_sc = np.ones(DATA_BINS.size, dtype=float)
 
-            # === NEW: Data metrics per-symbol & per-subcarrier ===
-            # 用发端映射的 emit_constellations 作为 reference
-            ref_sc = emit_constellations[np.where(data_pos == i)[0]].ravel()
-
-            evm_rms_sym, _, snr_db_sym = evm_and_snr(constellation, ref_sc)
-            snr_data_per_symbol.append(float(np.median(snr_db_sym)))
-            snr_sc_sum += snr_db_sym
-            snr_sc_cnt += 1
-
-            # ===  子载波级 LLR 缩放 ===
-            w_sc = llr_scale_from_snr(snr_db_sym, lo=2.0, hi=10.0, min_scale=0.4, max_scale=1.0)
-
-            if plot and plot_opt['data_constellation'] and i in pic_idx.tolist():
-                seq = np.where(pic_idx==i)[0]
-                ax = axes[seq//n_cols, seq%n_cols][0]
-                draw_constellation_map(received=constellation, emit_pilot=emit_constellations[np.where(data_pos==i)[0]],
+            # 如果要画图
+            if plot and plot_opt['data_constellation'] and ground_truth and (i in data_index_map) and (
+                    i in pic_idx.tolist()):
+                seq = np.where(pic_idx == i)[0]
+                ax = axes[seq // n_cols, seq % n_cols][0]
+                draw_constellation_map(received=constellation,
+                                       emit_pilot=emit_constellations[data_index_map[i]],
                                        title=f'constellation{i}', ax=ax, limit_border=2)
 
+            # 生成 LLR（保持原逻辑）
             llr_sym, st = qpsk_llrs_from_constellation(
                 constellation, llr_clip=20.0, k_sigma_clip=4.0, belief_scale=0.5, use_mad=True
             )
-            # 你原有的 EVM-based scale 保留
+            ...
+
+            # --- 5) LLR 仍使用“MMSE后”的 constellation（你的原逻辑不变） ---
+            llr_sym, st = qpsk_llrs_from_constellation(
+                constellation, llr_clip=20.0, k_sigma_clip=4.0, belief_scale=0.5, use_mad=True
+            )
+
             evm2 = 0.5 * (st['sigma_r'] ** 2 + st['sigma_i'] ** 2)
             scale = np.clip(1.0 / (1.0 + 6.0 * evm2), 0.6, 1.2)
 
@@ -718,150 +687,223 @@ def analysis_txt(plot=False, plot_opt=None):
             src_idx_blocks.append(np.full(llr_sym.size, i, dtype=np.int32))
             sub_carr_freq_blocks.append(np.repeat(np.linspace(0, fs, N)[DATA_BINS], 2))
 
-    evm_avg = np.sqrt(evm_accum / count_accum)
-
-    # === NEW: Data metrics summary ===
-    snr_data_per_symbol = np.array(snr_data_per_symbol, dtype=float) if len(snr_data_per_symbol)>0 else np.array([0.0])
-    print(f"[DATA]  SNR over symbols: mean={snr_data_per_symbol.mean():.2f} dB | "
-          f"median={np.median(snr_data_per_symbol):.2f} dB | min={snr_data_per_symbol.min():.2f} dB")
-
-    if plot and plot_opt.get('snr_time_data', False):
+    evm_avg = np.sqrt(evm_accum / np.maximum(count_accum, 1))
+    if plot and plot_opt.get('snr_time_data', False) and ground_truth:
+        snr_data_per_symbol = np.array(snr_data_per_symbol, dtype=float) if len(snr_data_per_symbol)>0 else np.array([0.0])
+        print(f"[DATA]  SNR over symbols: mean={snr_data_per_symbol.mean():.2f} dB | "
+              f"median={np.median(snr_data_per_symbol):.2f} dB | min={snr_data_per_symbol.min():.2f} dB")
         plot_snr_over_time(snr_data_per_symbol, title="Data SNR over OFDM symbols")
-
-    snr_sc_avg = snr_sc_sum / np.maximum(snr_sc_cnt, 1)
-    if plot and plot_opt.get('snr_over_sc', False):
-        plot_snr_over_subcarrier(snr_sc_avg, title="Average SNR over subcarriers (Data)")
-
-    if plot and plot_opt['data_constellation']:
+    if plot and plot_opt['data_constellation'] and ground_truth:
         fig.tight_layout()
         plt.show()
-    if plot and plot_opt['evm_vs_sub_carr']:
-        plot_evm_vs_sub_carrier_idx(evm_avg)
+    if plot and plot_opt.get('evm_vs_sub_carr', False) and ground_truth:
+        plt.figure(); plt.plot(DATA_BINS, 20*np.log10(np.maximum(evm_avg,1e-12))); plt.title("EVM over subcarriers"); plt.show()
 
+    # === 聚合 LLR，进入 LDPC 解码 ===
     all_llrs = np.concatenate(llr_blocks) if llr_blocks else np.array([], dtype=np.float32)
     src_idx = np.concatenate(src_idx_blocks) if src_idx_blocks else np.array([], dtype=np.int32)
-    sub_carr_freq = np.concatenate(sub_carr_freq_blocks)
+    sub_carr_freq = np.concatenate(sub_carr_freq_blocks) if sub_carr_freq_blocks else np.array([], dtype=np.float32)
 
-    # LDPC decode in blocks of Ncw
     c = ldpc.code(standard=LDPC_STANDARD, rate=LDPC_RATE, z=LDPC_Z, ptype=LDPC_PTYPE)
-    assert Ncw == c.N and K == c.K, "make sure using same ldpc standard"
-    nblocks = min(all_llrs.size // Ncw, emit_bits_ldpc.size // Ncw)
-    if nblocks == 0:
+    K = c.K; Ncw = c.N
+    total_blocks_avail = all_llrs.size // Ncw
+    if total_blocks_avail == 0:
         print("No data LLRs collected; aborting.")
         return
-    llrs_used = all_llrs[:nblocks*Ncw].reshape(nblocks, Ncw)
+    llrs_mat = all_llrs[:total_blocks_avail * Ncw].reshape(total_blocks_avail, Ncw)
 
-    # 与 llrs_used 同步切块：
-    src_used = src_idx[:nblocks * Ncw].reshape(nblocks, Ncw)
-    sub_carr_freq_used = sub_carr_freq[:nblocks * Ncw].reshape(nblocks, Ncw)
+    # --- 工具：批量解码若干块，返回 (信息比特列表, preBER, postBER) ---
+    def decode_llrs_with_logging(
+            c, llrs_used, *, K, Ncw,
+            ground_truth: bool,
+            gt_cw: np.ndarray | None = None,  # (nblocks, Ncw) 的真值码字；仅在 ground_truth=True 时可传
+            print_limit: int = 10,
+            batch: int = 512,
+            microbatch: int | None = 256,
+            dgl_device: str = "cuda",
+            dgl_llr_clip: float = 20.0,
+            dgl_max_iter: int = 200,
+            dgl_verbose: bool = False,
+            dgl_log_every: int = 1,
+            dgl_check_every: int = 1,
+    ):
+        """
+        批量解码 + 打印日志（ground_truth=True/False都支持）。
+        返回:
+          decoded_info: List[np.ndarray]  每块的信息比特（长度 K）
+          stats: dict   汇总统计信息（均值/中位数等）
+        """
+        # ---- DGL/解码器参数（若 ldpc 实现不支持这些属性，设置也不会出错） ----
+        try:
+            c.dgl_device = dgl_device
+            c.dgl_llr_clip = float(dgl_llr_clip)
+            c.dgl_max_iter = int(dgl_max_iter)
+            c.dgl_verbose = bool(dgl_verbose)
+            c.dgl_log_every = int(dgl_log_every)
+            c.dgl_check_every = int(dgl_check_every)
+            if microbatch is not None:
+                c.dgl_microbatch = int(microbatch)
+        except Exception:
+            pass
 
-    # ground-truth 编码比特按 Ncw 重排（不覆盖原变量，避免后面复用出问题）
-    gt_cw = emit_bits_ldpc.reshape(-1, Ncw)
-
-    # 只打印前 100 个块（也要防止块数或 gt 数量不够）
-    print_limit = min(0, nblocks, gt_cw.shape[0])
-
-    # 可选参数（实例属性，可在第一次调用前设置）
-    c.dgl_device = 'cuda'  # 或 'cuda:0'
-    c.dgl_llr_clip = 20.0
-    c.dgl_max_iter = 200
-    c.dgl_verbose = False  # True 时打印每若干轮的综合校验和
-    c.dgl_log_every = 1  # 日志间隔（轮）
-    c.dgl_check_every = 1  # syndrome 早停检查的频率（轮）
-
-    BATCH = 512  # 结合显存自己调；也可更大，内部还有 c.dgl_microbatch 兜底
-    c.dgl_microbatch = 256  # 避免一次性张量太大；也可以不设或设 None
-
-    decoded_info = []
-    bad_idxs = []
-    pre_list, post_list = [], []
-    for s in range(0, nblocks, BATCH):
-        e = min(s + BATCH, nblocks)
-
-        # 1) 组装 ch_batch: 形状 (b, N)
-        # llrs_used 如果是 list[np.ndarray], 用 stack；如果本来就是 (nblocks, N) 的 ndarray，直接切片即可
+        # ---- 预处理 llrs_used 的形状 ----
         if isinstance(llrs_used, list):
-            ch_batch = np.stack([llrs_used[i].copy() for i in range(s, e)], axis=0)
+            nblocks = len(llrs_used)
         else:
-            ch_batch = llrs_used[s:e].copy()
+            nblocks = int(llrs_used.shape[0])
 
-        # 2) 预检查（按样本计算 pre-BER）
-        hard_pre = (ch_batch < 0).astype(np.uint8)  # (b, N)
-        pre_ber = np.mean(hard_pre != gt_cw[s:e], axis=1)  # (b,)
+        decoded_info = []
+        it_list = []
+        pre_list = []
+        post_list = []
+        flip_rate_list = []
+        llr_gain_list = []
 
-        # 3) 一次性批量解码（GPU）
-        appB, itB = c.decode(ch_batch, dectype='sumprod2_dgl')  # appB: (b, N)
-        xhatB = (appB < 0).astype(np.uint8)  # (b, N)
-        post_ber = np.mean(xhatB != gt_cw[s:e], axis=1)  # (b,)
+        # ---- 主循环：分批解码 ----
+        for s in range(0, nblocks, batch):
+            e = min(s + batch, nblocks)
 
-        pre_list.extend(pre_ber.tolist())
-        post_list.extend(post_ber.tolist())
-        # 5) 打印与收集
-        for j, i in enumerate(range(s, e)):
-            if i < print_limit:
-                it_show = itB if np.isscalar(itB) else int(itB)  # GPU 批量路径返回的是统一的轮数
-                print(f"[BLK {i:04d}] it={it_show:3d} preBER={pre_ber[j]:.4f} postBER={post_ber[j]:.4f}")
-            decoded_info.append(xhatB[j, :K])
-            if post_ber[j]:
-                bad_idxs.append(i)
+            # 组装 (b, Ncw)
+            if isinstance(llrs_used, list):
+                ch_batch = np.stack([llrs_used[i].copy() for i in range(s, e)], axis=0)
+            else:
+                ch_batch = llrs_used[s:e].copy()
 
-    if plot and plot_opt['BER_show']:
-        plot_pre_post_ber(pre_list, post_list)
+            # 预判（硬判），作为 preBER / flip_rate 的“前状态”
+            hard_pre = (ch_batch < 0).astype(np.uint8)  # (b, Ncw)
 
-    for bi in bad_idxs:
-        uniq, cnt = np.unique(src_used[bi], return_counts=True)
-        top = uniq[np.argsort(-cnt)[:3]]
-        if len(top) == 2:
-            freq1_l = np.min(sub_carr_freq_used[bi][np.where(src_used[bi].flatten() == uniq[0])[0]])
-            freq1_h = np.max(sub_carr_freq_used[bi][np.where(src_used[bi].flatten() == uniq[0])[0]])
-            freq2_l = np.min(sub_carr_freq_used[bi][np.where(src_used[bi].flatten() == uniq[1])[0]])
-            freq2_h = np.max(sub_carr_freq_used[bi][np.where(src_used[bi].flatten() == uniq[1])[0]])
-            print(f"[BLK {bi}] dominated by OFDM symbols: {top}, counts={cnt[np.argsort(-cnt)[:3]]}, "
-                  f"corresponding sub carrier freq: {freq1_l:.2f} - {freq1_h:.2f} (first OFDM symbol) and {freq2_l:.2f} - {freq2_h:.2f} (second OFDM symbol)")
-        elif len(top) == 1:
-            min_freq = np.min(sub_carr_freq_used[bi])
-            max_freq = np.max(sub_carr_freq_used[bi])
-            print(f"[BLK {bi}] dominated by OFDM symbols: {top}, counts={cnt[np.argsort(-cnt)[:3]]}, "
-                  f"corresponding sub carrier freq: {min_freq:.2f} - {max_freq:.2f}")
-        else:
-            raise ValueError(f"data split in {len(top)} OFDM symbols, not supported now")
+            # ground_truth=True 可计算 preBER
+            if ground_truth and (gt_cw is not None):
+                pre_ber = np.mean(hard_pre != gt_cw[s:e], axis=1)  # (b,)
+            else:
+                pre_ber = np.full((e - s,), np.nan, dtype=float)
 
-    received_bits = np.concatenate(decoded_info).astype(np.uint8)
+            # 调用解码器（GPU/CPU）
+            appB, itB = c.decode(ch_batch, dectype='sumprod2_dgl')  # appB: (b, Ncw)
+            xhatB = (appB < 0).astype(np.uint8)  # (b, Ncw)
 
-    received_bits = received_bits[:emit_bits.size]
-    # Descramble received bits
-    # emit_bits = scrambler(emit_bits, seed=0b1111111)
-    # received_bits = scrambler(received_bits, seed=0b1111111)
-    emit_bits = scrambler_random(emit_bits, seed=256)
-    received_bits = scrambler_random(received_bits, seed=256)
-    print(symbols.shape[0])
+            # 统计：postBER 或替代指标
+            if ground_truth and (gt_cw is not None):
+                post_ber = np.mean(xhatB != gt_cw[s:e], axis=1)  # (b,)
+                flip_rate = np.mean(hard_pre != xhatB, axis=1)  # “被纠正”的比例（可做参考）
+                # LLR 置信度提升
+                in_med = np.median(np.abs(ch_batch), axis=1)
+                out_med = np.median(np.abs(appB), axis=1)
+                llr_gain = np.where(in_med > 0, out_med / in_med, 1.0)
+            else:
+                post_ber = np.full((e - s,), np.nan, dtype=float)
+                flip_rate = np.mean(hard_pre != xhatB, axis=1)  # 无GT时可报告 flip_rate
+                in_med = np.median(np.abs(ch_batch), axis=1)
+                out_med = np.median(np.abs(appB), axis=1)
+                llr_gain = np.where(in_med > 0, out_med / in_med, 1.0)
 
-    emit_bit0 = emit_bits.reshape(-1,2)[:,1]
-    received_bit0 = received_bits.reshape(-1,2)[:,1]
-    print(f"BER for bit 0: {1 - np.sum(np.equal(emit_bit0.flatten(), received_bit0.flatten())) / emit_bit0.size:.4f}")
+            # 打印：按你的要求，“在 ground_truth=False 的时候进行打印”
+            for j, i in enumerate(range(s, e)):
+                # 迭代轮数：可能返回标量或每块不同；统一转 int
+                it_show = int(itB if np.isscalar(itB) else itB[j])
+                if (not ground_truth) and (i < print_limit):
+                    print(f"[BLK {i:04d}] it={it_show:3d} flip_rate={flip_rate[j]:.4f} llr_gain={llr_gain[j]:.2f}")
+                elif ground_truth and (i < print_limit):
+                    # 有GT时也可打印（你也可以关掉）
+                    print(f"[BLK {i:04d}] it={it_show:3d} preBER={pre_ber[j]:.4f} postBER={post_ber[j]:.4f} "
+                          f"flip_rate={flip_rate[j]:.4f} llr_gain={llr_gain[j]:.2f}")
 
-    emit_bit1 = emit_bits.reshape(-1,2)[:,0]
-    received_bit1 = received_bits.reshape(-1,2)[:,0]
-    print(f"BER for bit 1: {1 - np.sum(np.equal(emit_bit1.flatten(), received_bit1.flatten())) / emit_bit1.size:.4f}")
+            # 收集
+            for j in range(e - s):
+                decoded_info.append(xhatB[j, :K])
+            it_list.extend([int(itB if np.isscalar(itB) else itB[j]) for j in range(e - s)])
+            pre_list.extend(pre_ber.tolist())
+            post_list.extend(post_ber.tolist())
+            flip_rate_list.extend(flip_rate.tolist())
+            llr_gain_list.extend(llr_gain.tolist())
 
-    # Total BER
-    BER = 1 - np.sum(np.equal(received_bits, emit_bits)) / received_bits.size
-    print(f"Total BER: {BER * 100:.4f}%")
+        if plot and plot_opt['BER_show'] and ground_truth:
+            plot_pre_post_ber(pre_list, post_list)
 
-    bytes = np.packbits(received_bits)
+        stats = {
+            "it_mean": float(np.nanmean(it_list)),
+            "it_median": float(np.nanmedian(it_list)),
+            "preBER_mean": float(np.nanmean(pre_list)),
+            "postBER_mean": float(np.nanmean(post_list)),
+            "flip_rate_mean": float(np.mean(flip_rate_list)),
+            "llr_gain_median": float(np.median(llr_gain_list)),
+            "nblocks": nblocks,
+        }
+        return decoded_info, stats
 
-    # bytes = get_bytes(np.array(received_bits).flatten())
-    # with open(output_dir + "/shakespeare2.txt", 'wb') as file:
-    #     file.write(bytes.tobytes())
-    with open(output_dir + "/Jossy.bin", 'wb') as file:
-        file.write(bytes.tobytes())
+    # === 第一步：先解出覆盖 64bit 头的最小块数 ===
+    header_blocks = min(total_blocks_avail, math.ceil(HEADER_BITS / K))
+    gt_cw = maybe_gt_cw(emit_bits_ldpc, 0, header_blocks, Ncw, ground_truth)
+    decoded_info_h, stats_h = decode_llrs_with_logging(
+        c, llrs_mat[:header_blocks],
+        K=K, Ncw=Ncw,
+        ground_truth=ground_truth,
+        gt_cw=gt_cw,
+    )
+    print("[Head Stats]:")
+    for key, value in stats_h.items():
+        print(f"  - {key}: {value}")
+    info_bits_concat = np.concatenate(decoded_info_h).astype(np.uint8)
+
+    # 头部位于解码后的“信息比特”中，需要先解扰再解析
+    info_bits_descr = scrambler_random(info_bits_concat, seed=SCRAMBLE_SEED)
+    if info_bits_descr.size < HEADER_BITS:
+        print(f"[ERR] 解出的信息比特不足 {HEADER_BITS}，got={info_bits_descr.size}")
+        return
+
+    header_bits = info_bits_descr[:HEADER_BITS]
+    payload_len = u64_from_bits_msb(header_bits)
+    print(f"[RX] header payload_len(bits)={payload_len}")
+
+    # === 第二步：按头指出的长度，解出刚好需要的块数 ===
+    total_info_needed = HEADER_BITS + payload_len
+    need_blocks = min(total_blocks_avail, math.ceil(total_info_needed / K))
+
+    decoded_info = decoded_info_h
+    gt_cw2 = maybe_gt_cw(emit_bits_ldpc, header_blocks, need_blocks, Ncw, ground_truth)
+    if need_blocks > header_blocks:
+        decoded_info_2, stats_2 = decode_llrs_with_logging(
+            c, llrs_mat[header_blocks:need_blocks],
+            K=K, Ncw=Ncw,
+            ground_truth=ground_truth,
+            gt_cw=gt_cw2,
+        )
+        decoded_info.extend(decoded_info_2)
+        print("[Data Stats]:")
+        for key, value in stats_2.items():
+            print(f"  - {key}: {value}")
+
+    # 汇总所需的信息比特并解扰
+    info_bits_all = np.concatenate(decoded_info)[:need_blocks * K].astype(np.uint8)
+    info_bits_all = info_bits_all[:total_info_needed]  # 精确到头+payload
+    info_bits_all_descr = scrambler_random(info_bits_all, seed=SCRAMBLE_SEED)
+
+    # 取出 payload
+    payload_bits = info_bits_all_descr[HEADER_BITS:HEADER_BITS + payload_len]
+    print(f"[RX] got payload_bits={payload_bits.size}")
+
+    # （可选）仅测试模式下做 BER 对比
+    if ground_truth:
+        try:
+            gt_payload = get_bits_from_file(TXT_INPUT_PATH)  # 或 TIFF_INPUT_PATH
+            if gt_payload.size >= payload_bits.size:
+                print(f"[TX] got original file_bits={gt_payload.size}")
+                gt_payload = gt_payload[:payload_bits.size]
+                ber_payload = 1 - np.mean(payload_bits == gt_payload)
+                print(f"[Payload BER] {ber_payload * 100:.4f}% (对齐文件真实长度)")
+        except Exception:
+            pass
+
+    # 保存输出（按需要改名）
+    out_bytes = np.packbits(payload_bits)
+    with open(os.path.join(output_dir, "payload.bin"), 'wb') as f:
+        f.write(out_bytes.tobytes())
+    print(f"[RX] payload saved: {os.path.join(output_dir,'payload.bin')}  ({out_bytes.size} bytes)")
 
 if __name__ == "__main__":
     assert os.path.exists(project_dir), "specify your proj dir"
-    dirs = [output_dir, record_dir, data_dir]
-    for dir_name in dirs:
-        if not os.path.exists(dir_name):
-            os.makedirs(dir_name)
+    for dir_name in [output_dir, record_dir, data_dir]:
+        os.makedirs(dir_name, exist_ok=True)
     plot_opt ={
         'correlation':                          True,
         'impulse_response':                     True,
@@ -872,9 +914,8 @@ if __name__ == "__main__":
         'received_signal':                      True,
         'evm_vs_sub_carr':                      True,
         'BER_show':                             True,
-        'snr_time_pilot':                       True,  # 导频阶段的平均 SNR(随符号)曲线
-        'snr_time_data':                        True,  # 数据阶段（判决导向统计）的 SNR(随符号)曲线
-        'snr_over_sc':                          True, # 跨子载波的平均 SNR 曲线
+        'snr_time_pilot':                       True,
+        'snr_time_data':                        True,
+        'snr_over_sc':                          True,
     }
-
-    analysis_txt(plot=True , plot_opt=plot_opt)
+    analysis_txt(plot=True , plot_opt=plot_opt ,ground_truth=False ,tx_bits_path=TXT_INPUT_PATH)

@@ -56,6 +56,19 @@ def ldpc_encode_bits(in_bits,
     cw = np.concatenate(codewords)
     return cw, (K, N)
 
+def scrambler_random(bits, seed=42):
+    """
+    使用固定随机种子生成伪随机 bit 流进行按位异或 scrambler
+    :param bits: 输入 bit 数组（0/1）
+    :param seed: 随机种子
+    :return: scrambled bit 数组
+    """
+    rng = np.random.default_rng(seed)  # 创建随机生成器
+    prbs = rng.integers(0, 2, size=len(bits), dtype=np.uint8)  # 生成 0/1 伪随机序列
+    scrambled = np.bitwise_xor(bits, prbs)  # 按位异或
+    return scrambled.astype(np.uint8)
+
+
 if __name__ == "__main__":
     bits = np.array([0,0,1,0,1,1,0,1])
     bits_scra = scrambler(bits)

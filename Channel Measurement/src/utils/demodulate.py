@@ -36,6 +36,10 @@ def non_approximate(data: np.ndarray):
     return data
 
 
+def normalize_approximate(data:np.ndarray):
+    eps = 1e-8
+    return data / (np.abs(data)+eps)
+
 def get_symbols(record:np.ndarray, cp_len, N, **kwargs) -> np.ndarray:
     """
         from record get symbols (without cyclic prefix)
@@ -71,7 +75,11 @@ def get_constellation(symbols: np.ndarray, H_f: np.ndarray, approximation=non_ap
         # when more than 1 symbol is given, symbol length should be specified
         symbol_len = kwargs['symbol_len']
         symbols = symbols.reshape(-1, symbol_len)
-        Y_f = np.fft.fft(symbols, axis=1)
+        if symbols.shape[0] == 1:
+            symbols = symbols.flatten()
+            Y_f = np.fft.fft(symbols)
+        else:
+            Y_f = np.fft.fft(symbols, axis=1)
     else:
         assert symbols.ndim == 1, "when more than 1 symbol is given, symbol length should be specified"
         symbol_len = symbols.size
@@ -123,11 +131,11 @@ def get_bytes(binary_data: np.ndarray, bitorder='big'):
     """
     if bitorder not in ['big', 'little']:
         raise ValueError("bitorder should in ['big', 'little']")
-    bits = binary_data.flatten()[:binary_data.size // 8 * 8].reshape(-1, 8)
+    bits = binary_data.flatten()[:binary_data.size // 8 * 8]
     if binary_data.size > bits.size:
         print(f"{binary_data.size - bits.size} bits were dropped, see details at get_bytes()")
     try:
-        res = np.packbits(bits.flatten(), bitorder=bitorder)
+        res = np.packbits(bits, bitorder=bitorder)
         return res
     except:
         print("Error occurred when get_bytes is invoked, make sure the given data is binary")

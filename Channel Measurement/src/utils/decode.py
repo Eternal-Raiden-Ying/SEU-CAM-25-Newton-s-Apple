@@ -1,6 +1,17 @@
 import os
 import numpy as np
+import sys
+LDPC_PY_PATH = r'D:\\Pycharm\\SEU-CAM-25-Newton-s-Apple\\ldpc_jossy\\py'
+if LDPC_PY_PATH and LDPC_PY_PATH not in sys.path:
+    sys.path.append(LDPC_PY_PATH)
 
+try:
+    import ldpc  # from ldpc_jossy/py
+except Exception as e:
+    raise ImportError(
+        f"无法导入 ldpc 包：{e}\n"
+        f"请检查 LDPC_PY_PATH 是否指向 ldpc_jossy/py，并确保已按 README 编译了解码动态库。"
+    )
 
 def decode_bytes(byte_data, pth):
     """
@@ -37,3 +48,266 @@ def descrambler(bits, seed=0b1111111):
         out[i] = bits[i] ^ newbit
         state = ((state << 1) & 0x7f) | newbit
     return out
+
+def ldpc_decode(llrs_used, nblocks, K,LDPC_STANDARD = '802.11n',LDPC_RATE = '1/2' ,LDPC_Z = 27 , LDPC_PTYPE = 'A' ):
+    """
+    Perform LDPC decoding on the provided LLRs and descramble the output.
+
+    Args:
+        llrs_used: Array of LLRs shaped (nblocks, Ncw)
+        nblocks: Number of LDPC codeword blocks
+        K: Number of systematic info bits per block
+        seed: Scrambler seed for descrambling (default: 0b1111111)
+
+    Returns:
+        received_bits: Descrambled decoded information bits
+    """
+    c = ldpc.code(standard=LDPC_STANDARD, rate=LDPC_RATE, z=LDPC_Z, ptype=LDPC_PTYPE)
+    decoded_info = []
+    for i in range(nblocks):
+        app, iters = c.decode(llrs_used[i], dectype='sumprod2')
+        xhat = (app < 0).astype(np.uint8)  # Hard decision
+        uhat = xhat[:K]  # Systematic info bits
+        decoded_info.append(uhat)
+    received_bits = np.concatenate(decoded_info).astype(np.uint8)
+    return received_bits
+
+from collections import Counter, defaultdict
+
+def diagnose_ofdm_boundary_effects(
+    *,
+    symbols,                    # ndarray [S, N]
+    origin_H_f,                 # ndarray [N]  频域信道
+    delta,                      # CFO/SFO 相关项
+    fixed_phase_shift_factor,   # 你的固定相位项
+    N,                          # FFT 长度
+    symbol_len,                 # (N+CP) or 你的定义：参与 delta 的步长
+    get_constellation,          # 可调用: get_constellation(symbols=..., H_f=..., approximation=..., symbol_len=N)
+    non_approximate,            # 传入你现有的 approximation 标志
+    llrs_used,                  # ndarray [nblocks, Ncw]
+    emit_bits_ldpc,             # 发端 LDPC 编码比特 (1D)，会被 reshape(-1, Ncw)
+    src_used=None,              # 可选：ndarray [nblocks, Ncw]，每比特来源的 OFDM 符号索引
+    llr_blocks=None,            # 若未提供 src_used，可用 llr_blocks 来自动构造来源索引
+    clockwise=False,            # 你的 b0/b1 约定是否顺时针
+    th=0.07,                    # “高误码”阈值（preBER>th）
+    top_k=20,                   # 边界块打印前 top_k 个
+    single_min_samples=5,       # 单符号固定子载波统计的最小样本数门槛
+    verbose=True,                # 是否打印
+    block_limit=None
+):
+    """
+    诊断内容：
+      1) 单符号块 vs 边界块 数量与平均 preBER
+      2) 边界高误码块：主导符号对、preBER 以及两端符号的 ΔCPE/ΔGain/ΔSlope
+      3) 单符号高误码块：按 (符号,子载波) 聚合的误码热点（可放宽 single_min_samples 观察）
+      4) 符号级全局指标：每个符号的 CPE/gain/slope 以便观察突变点
+
+    返回：
+      dict 包含关键数组与记录，便于外部二次处理或画图。
+    """
+    def qpsk_nearest_ideal(s):
+        re = np.sign(np.real(s)); re[re == 0] = 1.0
+        im = np.sign(np.imag(s)); im[im == 0] = 1.0
+        return (re + 1j * im) / np.sqrt(2, dtype=np.float32)
+
+    def wrap_to_pi(x):
+        return (x + np.pi) % (2*np.pi) - np.pi
+
+    def estimate_symbol_metrics(symbols, origin_H_f, delta, fixed_phase_shift_factor,
+                                N, symbol_len, num_symbols, clockwise=False):
+        theta = np.zeros(num_symbols, dtype=np.float64)
+        gain  = np.zeros(num_symbols, dtype=np.float64)
+        slope = np.zeros(num_symbols, dtype=np.float64)
+        for s in range(num_symbols):
+            phase_rot = np.exp(1j * (-2*np.pi/N * delta * s * symbol_len * np.arange(N)
+                                     + fixed_phase_shift_factor * s))
+            Hcorr = origin_H_f * phase_rot
+            cons  = get_constellation(symbols=symbols[s, :], H_f=Hcorr,
+                                      approximation=non_approximate, symbol_len=N)
+            cons  = np.asarray(cons, dtype=np.complex64).ravel()
+            ideal = qpsk_nearest_ideal(cons)
+            ph    = cons / ideal
+
+            m = np.mean(ph)
+            theta[s] = np.angle(m)
+            gain[s]  = np.abs(m)
+
+            ang = np.unwrap(np.angle(ph))
+            if ang.size >= 4:
+                k = np.arange(ang.size, dtype=np.float64)
+                slope[s] = np.polyfit(k, ang, 1)[0]
+            else:
+                slope[s] = 0.0
+        return theta, gain, slope
+
+    # ---------- 预处理 ----------
+    nblocks, Ncw = llrs_used.shape
+
+    # 只分析前 block_limit 个块（codewords）
+    if block_limit is not None:
+        nb_eff = min(block_limit, nblocks, emit_bits_ldpc.size // Ncw)
+        llrs_used = llrs_used[:nb_eff]
+        emit_bits_ldpc = emit_bits_ldpc[:nb_eff * Ncw]
+        if src_used is not None:
+            src_used = src_used[:nb_eff]
+        nblocks = nb_eff  # 更新有效块数
+
+    gt_cw = emit_bits_ldpc.reshape(-1, Ncw)
+    hard_pre = (llrs_used < 0).astype(np.uint8)
+    preBER = np.mean(hard_pre != gt_cw, axis=1)
+
+    # 来源索引：若未传入 src_used，则由 llr_blocks 自动构造
+    if src_used is None:
+        assert llr_blocks is not None, "请提供 src_used 或 llr_blocks 以构造来源索引映射"
+        src_idx_blocks = []
+        sub_idx_blocks = []
+        bit_idx_blocks = []
+        for s_idx, llr_sym in enumerate(llr_blocks):
+            B = llr_sym.size
+            if B % 2 != 0:
+                raise ValueError("LLR交织应是 [b0,b1] 重复，长度需为偶数")
+            nd = B // 2
+            src_idx_blocks.append(np.full(B, s_idx, dtype=np.int32))
+            sub_idx_blocks.append(np.repeat(np.arange(nd, dtype=np.int32), 2))
+            bit_idx_blocks.append(np.tile(np.array([0, 1], dtype=np.int32), nd))
+        src_idx = np.concatenate(src_idx_blocks)
+        # sub_idx/bit_idx 如需也可返回或使用
+        src_used = src_idx[:nblocks * Ncw].reshape(nblocks, Ncw)
+
+    # 单符号块 / 边界块
+    uniq_counts = np.array([np.unique(src_used[i]).size for i in range(nblocks)])
+    is_boundary = (uniq_counts > 1)
+    single_idx  = np.where(~is_boundary)[0]
+    boundary_idx = np.where(is_boundary)[0]
+
+    # ---------- 符号级估计（CPE/gain/slope） ----------
+    num_symbols = symbols.shape[0]
+    theta, gain, slope = estimate_symbol_metrics(
+        symbols, origin_H_f, delta, fixed_phase_shift_factor,
+        N=N, symbol_len=symbol_len, num_symbols=num_symbols, clockwise=clockwise
+    )
+
+    # ---------- 汇总/打印 ----------
+    if verbose:
+        print("=== Block 分类统计 ===")
+        print(f"总块数: {nblocks}, 单符号块: {single_idx.size}, 边界块: {boundary_idx.size}")
+        if single_idx.size:
+            print(f"平均 preBER (单符号): {np.mean(preBER[single_idx]):.4f}")
+        if boundary_idx.size:
+            print(f"平均 preBER (边界):   {np.mean(preBER[boundary_idx]):.4f}")
+
+    # 边界高误码块明细
+    boundary_high = np.where(is_boundary & (preBER > th))[0]
+    boundary_records = []
+    for i in boundary_high:
+        sym, cnt = np.unique(src_used[i], return_counts=True)
+        order = np.argsort(-cnt)
+        if len(order) < 2:
+            continue
+        sA, sB = int(sym[order[0]]), int(sym[order[1]])
+        dCPE   = np.degrees(np.abs(wrap_to_pi(theta[sA] - theta[sB])))
+        dGain  = 20.0 * np.log10((gain[sA]+1e-9)/(gain[sB]+1e-9))
+        dSlope = slope[sA] - slope[sB]
+        boundary_records.append((i, sA, sB, int(cnt[order[0]]), int(cnt[order[1]]),
+                                 float(preBER[i]), float(dCPE), float(dGain), float(dSlope)))
+
+    # 按 preBER 降序打印
+    boundary_records.sort(key=lambda t: -t[5])
+    if verbose and boundary_records:
+        print("\n=== 边界高误码块（按 preBER 降序，前{}）===".format(min(top_k, len(boundary_records))))
+        for rec in boundary_records[:top_k]:
+            i, sA, sB, cA, cB, p, dC, dG, dS = rec
+            print(f"[BLK {i:04d}] preBER={p:.4f}  top-symbols=[({sA},{cA}),({sB},{cB})]  "
+                  f"ΔCPE={dC:.2f}°  ΔGain={dG:.2f} dB  ΔSlope={dS:.3e}")
+
+        # 相关性
+        arr = np.array(boundary_records, dtype=float)
+        pre = arr[:,5]; dC = arr[:,6]; dG = np.abs(arr[:,7]); dS = np.abs(arr[:,8])
+        def corr(x,y):
+            x = x - x.mean(); y = y - y.mean()
+            den = np.sqrt((x@x)*(y@y) + 1e-12)
+            return float((x@y)/den) if den > 0 else 0.0
+        print("\n相关性：")
+        print(f"corr(preBER, |ΔCPE|)   = {corr(pre, dC):+.3f}")
+        print(f"corr(preBER, |ΔGain|)  = {corr(pre, dG):+.3f}")
+        print(f"corr(preBER, |ΔSlope|) = {corr(pre, dS):+.3f}")
+
+    # 单符号高误码块里，检索“固定子载波（如存在）”
+    single_high = np.where((~is_boundary) & (preBER > th))[0]
+    single_hotlist = []
+    if single_high.size and llr_blocks is not None:
+        # 构建 (s,k) 聚合：误码/总计；并分 b0/b1
+        # 如果你需要 bit/子载波映射，解注释并返回。此处仅统计“是否存在热点”。
+        err_sum = defaultdict(int)
+        tot_sum = defaultdict(int)
+        err_sum_b = defaultdict(lambda: [0, 0])
+        tot_sum_b = defaultdict(lambda: [0, 0])
+
+        # 为了构造 sub_used/bit_used，需要完整的映射
+        sub_idx_blocks = []
+        bit_idx_blocks = []
+        for llr_sym in llr_blocks:
+            nd = (len(llr_sym) // 2)
+            sub_idx_blocks.append(np.repeat(np.arange(nd, dtype=np.int32), 2))
+            bit_idx_blocks.append(np.tile(np.array([0,1], dtype=np.int32), nd))
+        sub_used = np.concatenate(sub_idx_blocks)[:nblocks*Ncw].reshape(nblocks, Ncw)
+        bit_used = np.concatenate(bit_idx_blocks)[:nblocks*Ncw].reshape(nblocks, Ncw)
+
+        for i in single_high:
+            s = int(np.unique(src_used[i])[0])  # 单符号块：只有一个来源符号
+            errs = (hard_pre[i] != gt_cw[i]).astype(np.int32)
+            m = (src_used[i] == s)
+            k = sub_used[i][m]
+            b = bit_used[i][m]
+            e = errs[m]
+            for kk, ee in zip(k, e):
+                err_sum[(s, int(kk))] += int(ee)
+                tot_sum[(s, int(kk))] += 1
+            for kk, bb, ee in zip(k, b, e):
+                err_sum_b[(s, int(kk))][bb] += int(ee)
+                tot_sum_b[(s, int(kk))][bb] += 1
+
+        for (s, k), es in err_sum.items():
+            ts = tot_sum[(s, k)]
+            if ts >= max(1, int(single_min_samples)):
+                es0, es1 = err_sum_b[(s,k)]
+                ts0, ts1 = tot_sum_b[(s,k)]
+                r  = es/ts
+                r0 = es0/ts0 if ts0>0 else 0.0
+                r1 = es1/ts1 if ts1>0 else 0.0
+                single_hotlist.append((s, k, r, es, ts, r0, r1, es0, ts0, es1, ts1))
+
+        single_hotlist.sort(key=lambda t: -t[2])
+        if verbose and single_hotlist:
+            print("\n=== 单符号高误码块：固定子载波检查（TOP-10）===")
+            print("(sym, sc)  err_rate  [err/tot]   b0_rate[err/tot]  b1_rate[err/tot]")
+            for rec in single_hotlist[:10]:
+                s,k,r,es,ts,r0,r1,es0,ts0,es1,ts1 = rec
+                print(f"({s:3d},{k:4d})  {r:.3f}   [{es}/{ts}]     {r0:.3f}[{es0}/{ts0}]    {r1:.3f}[{es1}/{ts1}]")
+        elif verbose:
+            print("\n=== 单符号高误码块：固定子载波检查 ===\n未达到最小样本门槛或未观察到明显热点。")
+
+    # 符号级全局指标
+    symbol_table = []
+    if verbose:
+        print("\n=== 符号级全局指标（theta/gain/slope）===")
+        print("sym  theta(deg)  gain(dB)  slope(rad/subc)")
+    for s in range(num_symbols):
+        th_deg = float(np.degrees(theta[s]))
+        g_db   = float(20*np.log10(gain[s] + 1e-9))
+        slp    = float(slope[s])
+        symbol_table.append((s, th_deg, g_db, slp))
+        if verbose:
+            print(f"{s:3d}  {th_deg:9.3f}  {g_db:8.3f}   {slp:12.5e}")
+
+    # 返回结果字典
+    return {
+        "preBER": preBER,                   # [nblocks]
+        "is_boundary": is_boundary,         # [nblocks] bool
+        "boundary_records": boundary_records,   # list of tuples (blk, sA, sB, cntA, cntB, preBER, dCPE°, dGain_dB, dSlope)
+        "single_hotlist": single_hotlist,       # list of tuples (sym, sc, r, es, ts, r0, r1, es0, ts0, es1, ts1)
+        "symbol_metrics": {
+            "theta_rad": theta, "gain_lin": gain, "slope": slope,
+            "table": symbol_table          # (sym, theta_deg, gain_dB, slope)
+        }
+    }
