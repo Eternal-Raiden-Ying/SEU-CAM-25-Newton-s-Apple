@@ -1,11 +1,16 @@
 import os
 import numpy as np
 import sys
-from .abs_dir_def import LDPC_PY_PATH
-if LDPC_PY_PATH and LDPC_PY_PATH not in sys.path:
-    sys.path.append(LDPC_PY_PATH)
-import ldpc
+from typing import Dict, Tuple, Optional
+from .ldpc_jossy import code
 
+__all__ = ['ldpc_make_code', 'ldpc_encode_bits', 'scramble_bits']
+
+# LDPC default parameters (defaults are safe; change when invoking the function)
+LDPC_STANDARD = '802.11n'   # '802.11n' or '802.16'
+LDPC_RATE = '1/2'           # '1/2','2/3','3/4','5/6'
+LDPC_Z = 27                 # for 802.11n usually 27/54/81
+LDPC_PTYPE = 'A'            # only used for 802.16 rate 2/3 or 3/4
 
 def scrambler(bits, seed=0b1111111, bit_width=7):
     """
@@ -49,13 +54,8 @@ def scrambler(bits, seed=0b1111111, bit_width=7):
         # print(f"i:{i}, newbit:{newbit}, ", f"new_state:{state:>7b}".replace(' ', '0'))
     return out
 
-# LDPC parameters (defaults are safe; change to your needs)
-LDPC_STANDARD = '802.11n'   # '802.11n' or '802.16'
-LDPC_RATE = '1/2'           # '1/2','2/3','3/4','5/6'
-LDPC_Z = 27                 # for 802.11n usually 27/54/81
-LDPC_PTYPE = 'A'            # only used for 802.16 rate 2/3 or 3/4
-
-def ldpc_encode_bits(in_bits,
+def ldpc_encode_bits(in_bits,*,
+                     c = None,
                      standard=LDPC_STANDARD,
                      rate=LDPC_RATE,
                      z=LDPC_Z,
@@ -64,7 +64,8 @@ def ldpc_encode_bits(in_bits,
     Breaks input bits into K-length blocks and LDPC-encodes each block.
     Returns concatenated codeword bits.
     """
-    c = ldpc.code(standard=standard, rate=rate, z=z, ptype=ptype)
+    if c is None:
+        c = code(standard=standard, rate=rate, z=z, ptype=ptype)
     K, N = c.K, c.N
 
     # Trim or pad input to multiple of K
@@ -96,6 +97,46 @@ def scrambler_random(bits, seed=42):
     prbs = rng.integers(0, 2, size=len(bits), dtype=np.uint8) # 生成 0/1 伪随机序列
     scrambled = np.bitwise_xor(bits, prbs) # 按位异或
     return scrambled.astype(np.uint8)
+
+def ldpc_make_code(*,
+                   standard: str,
+                   rate: str,
+                   z: int,
+                   ptype: str,
+                   device: str = "cuda",
+                   llr_clip: float = 20.0,
+                   max_iter: int = 200,
+                   verbose: bool = False,
+                   log_every: int = 1,
+                   check_every: int = 1,
+                   microbatch: int = 256):
+    """
+    实例化 LDPC code，并把解码超参配置到实例属性上（供 code.decode 使用）。
+    这些属性名与你给的 ldpc.py 保持一致：
+      c.dgl_device, c.dgl_llr_clip, c.dgl_max_iter, c.dgl_verbose, c.dgl_log_every, c.dgl_check_every
+    """
+    c = code(standard=standard, rate=rate, z=z, ptype=ptype)
+
+    # —— 按原版要求写入实例属性（供 decode 使用）——
+    c.dgl_device       = device           # e.g. 'cuda' / 'cuda:0' / 'cpu'
+    c.dgl_llr_clip     = float(llr_clip)
+    c.dgl_max_iter     = int(max_iter)
+    c.dgl_verbose      = bool(verbose)
+    c.dgl_log_every    = int(log_every)
+    c.dgl_check_every  = int(check_every)
+    c.dgl_microbatch   = int(microbatch)
+
+    return c
+
+
+def scramble_bits(bits: np.ndarray, *, seed: int, mode: str = 'random', bit_width: int | None = None) -> np.ndarray:
+    if mode == 'random':
+        return scrambler_random(bits.astype(np.uint8), seed=seed)
+    elif mode == 'LFSR':
+        assert isinstance(bit_width, int)
+        return scrambler(bits.astype(np.uint8), seed=seed, bit_width=bit_width)
+    else:
+        raise ValueError(f"Unknown mode {mode}")
 
 
 if __name__ == "__main__":

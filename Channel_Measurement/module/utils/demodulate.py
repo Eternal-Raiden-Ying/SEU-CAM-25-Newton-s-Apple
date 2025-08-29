@@ -61,60 +61,66 @@ def get_symbols(record:np.ndarray, cp_len, N, **kwargs) -> np.ndarray:
     return ofdm_symbols
 
 
-def get_constellation(symbols: np.ndarray, H_f: np.ndarray, approximation=non_approximate, **kwargs):
+def get_constellation(symbols_td: np.ndarray, H_used: np.ndarray, *, DATA_BINS: np.ndarray) -> np.ndarray:
     """
-        return constellation with meanings, exclude the conjugate part
-    :param symbols: symbols in TD (without cp), you can get it from get_symbols()
-    :param H_f: estimated H(f), you can get it from evaluate_H_f()
-    :param approximation: choose a approximation rule, default non approximate
-    :param kwargs: for further develop
-        'symbol_len': when more than 1 symbol is given, symbol length should be specified
-    :return:
+    统一版等化：支持 [N]/[ns,N]。
+    返回：若输入为 [N] -> [Nd]；若 [ns,N] -> [ns,Nd]
     """
-    if 'symbol_len' in kwargs:
-        # when more than 1 symbol is given, symbol length should be specified
-        symbol_len = kwargs['symbol_len']
-        symbols = symbols.reshape(-1, symbol_len)
-        Y_f = np.fft.fft(symbols, axis=1)
+    Yf = np.fft.fft(symbols_td, axis=-1)
+    Xf = Yf / H_used
+    return Xf[..., DATA_BINS]
+
+
+# ========= QPSK 基础 =========
+def _qpsk_hard(z: np.ndarray) -> np.ndarray:
+    """
+    把星座点硬判到最近标准 QPSK 点 (±1 ± j)/√2；保持输入形状。
+    """
+    z = np.asarray(z)
+    re = np.sign(z.real)
+    im = np.sign(z.imag)
+    re[re == 0] = 1
+    im[im == 0] = 1
+    return (re + 1j * im) / np.sqrt(2)
+
+def QPSK_reflection(z: np.ndarray, *, clockwise: bool = False) -> np.ndarray:
+    """
+    constellation -> bits（**不是**就近映射）
+    - 输入:  z 复数星座，[Nd] 或 [n, Nd]
+    - 输出:  uint8 比特数组；若输入 [Nd] -> [Nd*2]；若 [n,Nd] -> [n, Nd*2]
+    规则：
+      (0,0) -> 第一象限（I>0,Q>0） 恒定
+      (0,1) -> clockwise=False 时对应第二象限；clockwise=True 时对应第四象限
+    实现（向量化）：
+      设 sI = (Re(z) >= 0), sQ = (Im(z) >= 0)
+      clockwise=True :  bI = ~sI, bQ = ~sQ
+      clockwise=False:  bI = ~sQ, bQ = ~sI
+    """
+    z = np.asarray(z)
+    if z.ndim == 1:
+        sI = (z.real >= 0)
+        sQ = (z.imag >= 0)
+        if clockwise:
+            bI = (~sI).astype(np.uint8)
+            bQ = (~sQ).astype(np.uint8)
+        else:
+            bI = (~sQ).astype(np.uint8)
+            bQ = (~sI).astype(np.uint8)
+        bits = np.stack([bI, bQ], axis=-1).reshape(-1)
+        return bits
+    elif z.ndim == 2:
+        sI = (z.real >= 0)
+        sQ = (z.imag >= 0)
+        if clockwise:
+            bI = (~sI).astype(np.uint8)
+            bQ = (~sQ).astype(np.uint8)
+        else:
+            bI = (~sQ).astype(np.uint8)
+            bQ = (~sI).astype(np.uint8)
+        bits2 = np.stack([bI, bQ], axis=-1)           # [n, Nd, 2]
+        return bits2.reshape(z.shape[0], -1)          # [n, Nd*2]
     else:
-        assert symbols.ndim == 1, "when more than 1 symbol is given, symbol length should be specified"
-        symbol_len = symbols.size
-        Y_f = np.fft.fft(symbols)
-
-    data_bins = np.arange(1, symbol_len // 2)
-    X_f = Y_f / H_f
-    data_carriers = X_f[data_bins] if symbols.ndim == 1 else X_f[:, data_bins]
-
-    # TODO: error repairing here or in the approximation
-    return approximation(data_carriers)
-
-
-def QPSK_reflection(data: np.ndarray, *, clockwise:bool = False, judge_radius=0.5):
-    """
-        constellations -->  binary np.ndarray
-        better use with approximation (even simple)
-        # TODO: reamin to turn it to be a BEC
-    :param data: constellations
-    :param clockwise: details at QPSK_mapping(), default anticlockwise
-    :param judge_radius:
-    :return:
-    """
-    data_dim = data.ndim
-    res = np.stack([np.ones_like(data), np.ones_like(data)], axis=data_dim) * (-1)
-    if clockwise:
-        res[np.where(np.abs(data-(1+1j)/np.sqrt(2)) < judge_radius)] = [0,0]
-        res[np.where(np.abs(data-(-1+1j)/np.sqrt(2)) < judge_radius)] = [1,0]
-        res[np.where(np.abs(data-(-1-1j)/np.sqrt(2)) < judge_radius)] = [1,1]
-        res[np.where(np.abs(data-(1-1j)/np.sqrt(2)) < judge_radius)] = [0,1]
-    else:
-        res[np.where(np.abs(data-(1+1j)/np.sqrt(2)) < judge_radius)] = [0,0]
-        res[np.where(np.abs(data-(-1+1j)/np.sqrt(2)) < judge_radius)] = [0,1]
-        res[np.where(np.abs(data-(-1-1j)/np.sqrt(2)) < judge_radius)] = [1,1]
-        res[np.where(np.abs(data-(1-1j)/np.sqrt(2)) < judge_radius)] = [1,0]
-
-    res = np.real(res)
-    res = res.astype(int)
-    return res
+        raise ValueError("QPSK_reflection: 仅支持 1D 或 2D 输入")
 
 def get_bytes(binary_data: np.ndarray, bitorder='big'):
     """

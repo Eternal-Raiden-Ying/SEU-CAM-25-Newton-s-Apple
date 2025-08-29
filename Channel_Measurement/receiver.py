@@ -1,0 +1,63 @@
+import os
+import argparse
+import numpy as np
+from module.receiver.receiver_scrambler_ldpc_comb_pilot_part_valid import receiver
+
+
+project_dir = r"D:\Documents\Coding\Python\SEUCAM"
+output_dir = os.path.join(project_dir, "Channel Measurement/output/ldpc")
+record_dir = os.path.join(project_dir, "Channel Measurement/record")
+data_dir = os.path.join(project_dir, "Channel Measurement/data")
+
+if __name__ == "__main__":
+    assert os.path.exists(project_dir), "specify your proj dir"
+    dirs = [output_dir, record_dir, data_dir]
+    for dir_name in dirs:
+        if not os.path.exists(dir_name):
+            os.makedirs(dir_name)
+
+    rx_pth = r"D:\Documents\Coding\Python\SEUCAM\Channel Measurement\temp\received_tiff_chirp_l2_10_24k_fs48k_N8192_cp1024_S8diff_R1-2_Z27_802.11n_A_random_middle_0.8_2.npy"
+    pilot_pth = r'D:\Documents\Coding\Python\SEUCAM\Channel Measurement\record\LDPC\pilot_different_txt820_seed256_part0.8_comb.npy'
+
+    plot_opt = {
+        'correlation':                      False,
+        'impulse_response':                 False,
+        'raw_pilot_constellation':          False,
+        'corrected_pilot_constellation':    False,
+        'data_constellation':               False,
+        'unwrap':                           False,
+        'received_signal':                  False,
+        'evm_vs_sub_carr':                  True,
+        'BER_show':                         True,
+        'snr_time_pilot':                   True,  # 导频阶段的平均 SNR(随符号)曲线
+        'snr_time_comb':                    True,
+        'snr_time_data':                    True,  # 数据阶段（判决导向统计）的 SNR(随符号)曲线
+        'snr_over_sc':                      True,  # 跨子载波的平均 SNR 曲线
+    }
+
+    args = argparse.Namespace(
+        fs=48000, N=8192, cp_len=1024, num_pilot=8,
+        chirp_len=2, chirp_l=10, chirp_h=24000,
+        data_start=409, data_tail=409,
+        ITERATION=10, COMB_PILOT_SEED_BASE=128,
+        groundtruth=True, head_bit=0,
+        tx_file_path=r"D:\Documents\Coding\Python\SEUCAM\Channel Measurement\temp\Jossy origin.tiff",
+        scrambler_seed=256, scrambler_mode='random', scrambler_bitwidth=None, clockwise=False,
+        ldpc_standard="802.11n", ldpc_rate="1/2", ldpc_z=27, ldpc_ptype="A",
+        ldpc_device="cuda", ldpc_llr_clip=20.0, ldpc_max_iter=200,
+        ldpc_verbose=False, ldpc_log_every=1, ldpc_check_every=1,
+        ldpc_microbatch=256, ldpc_batch=512,
+        plot=True, plot_opt=plot_opt
+    )
+
+    rx = np.load(rx_pth)
+    pilot = np.load(pilot_pth)
+    decoded_info, info = receiver(rx, pilot, args)
+    print(f"ldpc iter: {info['ldpc_iter']}")
+    print(f"pre_ber: {info['pre_ber']}")
+    print(f"post_ber: {info['post_ber']}")
+
+    bytes = np.packbits(decoded_info.flatten())
+    with open(output_dir + "/Jossy.tiff", 'wb') as file:
+        file.write(bytes.tobytes())
+
