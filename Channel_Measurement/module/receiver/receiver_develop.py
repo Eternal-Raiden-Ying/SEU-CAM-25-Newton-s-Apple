@@ -109,7 +109,7 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
         plot_correlation(corr=corr,
                          axvline_dict={'chirp_start':chirp_start+chirp_tpl.size-1,
                                        'ofdm_start':ofdm_start+chirp_tpl.size-1})
-    if print_flag: print_padded("synchronize done\n", print_len, print_pad)
+    if print_flag: print_padded("synchronize done", print_len, print_pad)
 
     # ---------------- 1) 前导 pilot：H(f) 与漂移/基准估计 + 质量评估 ----------------
     if print_flag: print_padded("begin to analyze front pilot", print_len, print_pad)
@@ -117,28 +117,30 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
     sym_pilot_td = get_symbols(rx_pilot_td, cp_len=cp_len, N=N)         # [num_pilot, N] 时域
     Hf_pilot = evaluate_H_f(sym_pilot_td, pilots_fd=pilot)              # [num_pilot, N]
     res_arg = estimate_drift_and_origin(Hf_pilot, N=N, symbol_len=symbol_len, return_plot_args=plot_opt['unwrap'])
-    delta0, phi0, origin_H_f = res_arg[0], res_arg[1], res_arg[2]
+    deltas, phis, origin_H_f = res_arg[0], res_arg[1], res_arg[2]
+    delta0 = np.mean(deltas)
+    phi0 = np.mean(phis)
     freq_bias = fs / (delta0 + 1) - fs
 
     pilot_metrics = analyze_pilots(
         symbols_td=sym_pilot_td, pilot_ref=pilot, DATA_BINS=DATA_BINS, mode="front", clockwise=clockwise,
-        Hf=correct_H_f(origin_H_f=origin_H_f, N=N, index=np.arange(num_pilot),
-                       symbol_len=symbol_len, delta=delta0, fixed_phase_shift_factor=phi0)
+        Hf=correct_H_f(origin_H_f=origin_H_f, N=N, index=np.arange(num_pilot),symbol_len=symbol_len,
+                       delta=delta0, fixed_phase_shift_factor=phi0)
     )
 
     if print_flag:
         print(f"delta:{delta0}")
         print(f"fixed_phase_shift_factor:{phi0}")
         print(f"fs of receiver - fs of emitter = {freq_bias}")
-        print(f"front pilot metrics: \nindex    snr     ber")
-        print_dict_values(pilot_metrics, ["snr_db_med","ber"], [f"pilot {i}" for i in range(num_pilot)])
+        print(f"front pilot metrics: \nindex    snr     ber     quality")
+        print_dict_values(pilot_metrics, ["snr_db_med","ber", 'q'], [f"pilot {i}" for i in range(num_pilot)])
 
     if plot and plot_opt['impulse_response']:
         plot_impulse_response(h_t=np.fft.ifft(origin_H_f), fs=fs)
     if plot and plot_opt['unwrap']:
         plot_args = res_arg[3]
         plot_unwrap_phase_fitting(
-            phase_shift=plot_args['ratio_avg'],
+            phase_shift=plot_args['ratio'],
             slope=plot_args['slope'],
             intercept=plot_args['intercept'],
             x_auto=plot_args['x_auto'],
@@ -153,7 +155,7 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
                                       DATA_BINS=DATA_BINS)
     if plot and plot_opt.get('snr_time_pilot', False):
         plot_snr_over_time(pilot_metrics["snr_db_med"], title="Front Pilot SNR over OFDM symbols")
-    if print_flag: print_padded(f"front pilot analysis done\n", print_len, print_pad)
+    if print_flag: print_padded(f"front pilot analysis done", print_len, print_pad)
 
     # ---------------- 2) 数据段切片 ----------------
     rx_data_td = rx[ofdm_start + num_pilot * (N + cp_len):]
@@ -266,7 +268,7 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
         M_total = estimate_M_from_filesize(
             filesize_bytes=file_bytes, K=code.K, Ncw=code.N, Nd=Nd, modulation_bits=2, iteration=ITERATION
         )
-        if print_flag: print_padded("file head analysis done\n", print_len, print_pad)
+        if print_flag: print_padded("file head analysis done", print_len, print_pad)
 
 
     M_total = int(min(M_total, M_guess)) if head_bit else M_guess
@@ -316,7 +318,7 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
         plot_snr_over_time(comb_metrics["snr_db_med"], title="Comb Pilot SNR over OFDM symbols")
     if print_flag:
         print_dict_values(pilot_pred_param, 'delta',[f"{i}: pilot {index}" for i, index in enumerate(pilot_pos)])
-        print_padded("comb pilot analysis done\n", print_len, print_pad)
+        print_padded("comb pilot analysis done", print_len, print_pad)
 
     # 外推 H_used（两路 + 权重融合）
     H_used_from_start = correct_H_f(
@@ -361,7 +363,7 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
         if plot and plot_opt['snr_over_sc']:
             plot_snr_over_subcarrier(np.mean(snr_from_constellation(const_mmse, const_ref), axis=0),
                                      sc_idx=DATA_BINS, title="Average SNR over subcarriers (Data)")
-    if print_flag: print_padded("data symbols analysis done\n", print_len, print_pad)
+    if print_flag: print_padded("data symbols analysis done", print_len, print_pad)
 
     # LLR + 按 per-SC SNR(dB) 缩放
     if print_flag: print_padded("begin to process and decode llr", print_len, print_pad)
@@ -388,7 +390,7 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
 
     # 与发端一致：收端解码后再加扰，得到最终位流（含 64bit 头）
     decoded_bits_scr = scramble_bits(decoded_info, seed=scr_seed, mode=scr_mode, bit_width=scr_bitwidth)
-    if print_flag: print_padded("llr processing and decoding done\n", print_len, print_pad)
+    if print_flag: print_padded("llr processing and decoding done", print_len, print_pad)
 
     info = {
         "M": int(M_total),

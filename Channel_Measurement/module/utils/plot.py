@@ -110,14 +110,14 @@ def draw_in_FD(freq, signal: np.ndarray,*,
         y = y[mask]
 
     if ax is None:
-        plt.plot(x, y)
+        plt.scatter(x, y, s=1, alpha=0.5)
         plt.title(title)
         plt.xlabel(x_label)
         plt.ylabel(y_label + ' (dB)') if 'dB' not in y_label and mode == 'Amplitude' else plt.ylabel(y_label)
         plt.grid()
         plt.show()
     else:
-        ax.plot(x, y)
+        ax.scatter(x, y, s=1, alpha=0.5)
         ax.set_title(title)
         ax.set_xlabel(x_label)
         ax.set_ylabel(y_label + ' (dB)') if 'dB' not in y_label and mode == 'Amplitude' else plt.ylabel(y_label)
@@ -215,19 +215,40 @@ def plot_impulse_response(h_t, fs,*,freq_half=True):
     plt.show()
 
 def plot_unwrap_phase_fitting(phase_shift, slope, intercept, x_auto, auto_unwrapped_phase, N):
-    phase_shift = np.concatenate([phase_shift[N//2:],phase_shift[:N//2]])
-    plt.title("Unwrap phase fitting line")
-    x = np.linspace(-N//2,N//2,N,endpoint=False)
-    plt.plot(x, np.angle(phase_shift), color='orange', label='original', alpha=0.5)
-    plt.plot(x, slope * x + intercept, linestyle='solid', label='fitting result', color='red')
-    plt.plot(x, slope * x + intercept + np.pi, linestyle='dotted', color='red', alpha=0.5)
-    plt.plot(x, slope * x + intercept - np.pi, linestyle='dotted', color='red', alpha=0.5)
-    plt.scatter(x_auto, auto_unwrapped_phase, label='auto_unwrap', s=1, color='green', marker='*', alpha=0.5)
-    plt.axhline(0, linestyle='dotted', color='black', linewidth=2)
-    plt.axvline(0, linestyle='dotted', color='black', linewidth=2)
-    plt.xlabel("sampling point")
-    plt.ylabel("unwrapped phase")
-    plt.legend()
+    num_sym = phase_shift.shape[0] if phase_shift.ndim > 1 else 1
+    n_rows, n_cols, figsize = auto_constellation_map_param(num_sym)
+    if n_cols * n_cols == 1:
+        x = np.linspace(-N // 2, N // 2, N, endpoint=False)
+        phase_shift = np.concatenate([phase_shift[N // 2:], phase_shift[:N // 2]])
+        plt.title(f"Unwrap phase fitting line")
+        plt.plot(x, np.angle(phase_shift), color='orange', label='original', alpha=0.5)
+        plt.plot(x, slope * x + intercept, linestyle='solid', label='fitting result', color='red')
+        plt.plot(x, slope * x + intercept + np.pi, linestyle='dotted', color='red', alpha=0.5)
+        plt.plot(x, slope * x + intercept - np.pi, linestyle='dotted', color='red', alpha=0.5)
+        plt.scatter(x_auto, auto_unwrapped_phase, label='auto_unwrap', s=1, color='green', marker='*', alpha=0.5)
+        plt.axhline(0, linestyle='dotted', color='black', linewidth=2)
+        plt.axvline(0, linestyle='dotted', color='black', linewidth=2)
+        plt.xlabel("sampling point")
+        plt.ylabel("unwrapped phase")
+        plt.legend(loc='lower right')
+    else:
+        fig, axes = plt.subplots(n_rows, n_cols, figsize=(figsize[0]*2, figsize[1]))
+        for i in range(num_sym):
+            ax = axes[i // n_cols, i % n_cols]
+            x = np.linspace(-N // 2, N // 2, N, endpoint=False)
+            phase = np.concatenate([phase_shift[i, N//2:],phase_shift[i, :N//2]])
+            ax.set_title(f"Unwrap phase fitting line {i+1}")
+            ax.plot(x, np.angle(phase), color='orange', label='original', alpha=0.5)
+            ax.plot(x, slope[i] * x + intercept[i], linestyle='solid', label='fitting result', color='red')
+            ax.plot(x, slope[i] * x + intercept[i] + np.pi, linestyle='dotted', color='red', alpha=0.5)
+            ax.plot(x, slope[i] * x + intercept[i] - np.pi, linestyle='dotted', color='red', alpha=0.5)
+            ax.scatter(x_auto[i], auto_unwrapped_phase[i], label='auto_unwrap', s=1, color='green', marker='*', alpha=0.5)
+            ax.axhline(0, linestyle='dotted', color='black', linewidth=2)
+            ax.axvline(0, linestyle='dotted', color='black', linewidth=2)
+            ax.set_xlabel("sampling point")
+            ax.set_ylabel("unwrapped phase")
+            ax.legend(loc='lower right')
+        fig.tight_layout()
     plt.show()
 
 def plot_original_constellations(symbols_td, H_used, pilot, *, DATA_BINS=None, pic_idx=None):

@@ -26,7 +26,7 @@ class code:
         # load C library (ctypes) once per instance
         self._load_clib()
         # 在 __init__ 的结尾处加入
-        self.print_iter = True  # 置 True 时，decode 每次调用都会打印内部迭代次数
+        self.print_iter = getattr(self, 'print_iter', False)  # 置 True 时，decode 每次调用都会打印内部迭代次数
 
         # DGL/CUDA 相关可调参数（可在外部覆盖）
         self.dgl_device = getattr(self, 'dgl_device', 'cuda')

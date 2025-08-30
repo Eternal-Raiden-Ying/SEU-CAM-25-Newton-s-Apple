@@ -111,7 +111,7 @@ def ldpc_decode_blocks(*,
 
         # 一次性批量解码（优先 GPU）
         try:
-            print(f"[Batch] BLK {s}-{e}")
+            if code.print_iter: print(f"[Batch] BLK {s}-{e}")
             appB, itB = code.decode(ch_batch, dectype='sumprod2_dgl')   # (b, N), (b,)
         except Exception:
             # 回退：CPU 单样本
@@ -131,7 +131,7 @@ def ldpc_decode_blocks(*,
 
     # —— 拼接整段信息位流（包含头部）——
     decoded_info = np.concatenate(decoded_info_chunks, axis=0).astype(np.uint8)   # (nblocks*K,)
-    it = np.array(itB)
+    it = np.array(it_list)
 
     # —— BER 统计（仅当提供 groundtruth_bits 时进行）——
     pre_ber = post_ber = None

@@ -2,6 +2,7 @@ import os
 import argparse
 import numpy as np
 from module.receiver.receiver_scrambler_ldpc_comb_pilot_part_valid import receiver
+from module.receiver.receiver_develop import receiver as receiver_dev
 
 
 project_dir = r"D:\Documents\Coding\Python\SEUCAM"
@@ -21,11 +22,11 @@ if __name__ == "__main__":
 
     plot_opt = {
         'correlation':                      False,
-        'impulse_response':                 False,
+        'impulse_response':                 True,
         'raw_pilot_constellation':          False,
-        'corrected_pilot_constellation':    False,
-        'data_constellation':               False,
-        'unwrap':                           False,
+        'corrected_pilot_constellation':    True,
+        'data_constellation':               True,
+        'unwrap':                           True,
         'received_signal':                  False,
         'BER_show':                         False,
         'snr_time_pilot':                   False,  # 导频阶段的平均 SNR(随符号)曲线
@@ -51,19 +52,21 @@ if __name__ == "__main__":
         ldpc_standard="802.11n", ldpc_rate="1/2", ldpc_z=27, ldpc_ptype="A",
         ldpc_device="cuda", ldpc_llr_clip=20.0, ldpc_max_iter=200,
         ldpc_verbose=False, ldpc_log_every=1, ldpc_check_every=1,
-        ldpc_microbatch=256, ldpc_batch=512,
+        ldpc_microbatch=256, ldpc_batch=512, ldpc_print_iter=False,
         # CPE PLL param
         pll_alpha=0.15, pll_snr_th_d=6.0,
         pll_alpha_min=0.05, pll_alpha_max=0.50,
         pll_snr_min_db=3.0, pll_snr_max_db=10.0,
         pll_beta=0.9, pll_snr_mid_db=6.0, pll_snr_scale=4.0,
         # plot settings
-        plot=False, plot_opt=plot_opt
+        plot=True, plot_opt=plot_opt,
+        # print settings
+        print_flag=True, print_len=64, print_pad='-'
     )
 
     rx = np.load(rx_pth)
     pilot = np.load(pilot_pth)
-    decoded_info, info = receiver(rx, pilot, args)
+    decoded_info, info = receiver_dev(rx, pilot, args)
     print(f"ldpc iter: {info['ldpc_iter']}")
     print(f"pre_ber: {info['pre_ber']}")
     print(f"post_ber: {info['post_ber']}")

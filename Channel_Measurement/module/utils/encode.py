@@ -109,7 +109,8 @@ def ldpc_make_code(*,
                    verbose: bool = False,
                    log_every: int = 1,
                    check_every: int = 1,
-                   microbatch: int = 256):
+                   microbatch: int = 256,
+                   print_iter: bool = False):
     """
     实例化 LDPC code，并把解码超参配置到实例属性上（供 code.decode 使用）。
     这些属性名与你给的 ldpc.py 保持一致：
@@ -125,6 +126,7 @@ def ldpc_make_code(*,
     c.dgl_log_every    = int(log_every)
     c.dgl_check_every  = int(check_every)
     c.dgl_microbatch   = int(microbatch)
+    c.print_iter       = bool(print_iter)
 
     return c
 

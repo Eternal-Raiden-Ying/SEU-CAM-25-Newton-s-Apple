@@ -19,9 +19,9 @@ import warnings
 import numpy as np
 from typing import Dict, Tuple, Optional
 from scipy.signal import correlate as sp_correlate
-from .math_process import phase_unwrap_auto, fitting_line
+from .math_process import phase_unwrap_auto, fitting_line, weighted_mean_exclude_extrema
 from .ldpc_jossy import code
-from .demodulate import _qpsk_hard, QPSK_reflection
+from .demodulate import _qpsk_hard, QPSK_reflection, get_constellation
 
 # ========= EVM / SNR =========
 def evm_from_constellation(const: np.ndarray, ref: np.ndarray) -> np.ndarray:
@@ -132,34 +132,49 @@ def estimate_drift_and_origin(Hf_seq: np.ndarray, *, N: int, symbol_len: int, re
     """
     H = np.asarray(Hf_seq)
     assert H.ndim == 2
-    ratio_avg = np.mean(H[1:] / H[:-1], axis=0)
-    x_auto, auto_unwrapped_phase, _ = phase_unwrap_auto(data=ratio_avg)
-    slope, intercept = fitting_line(x=x_auto, y=auto_unwrapped_phase, filter=True, residual_th=1.5)
-    delta = slope / (symbol_len * (-2 * np.pi) / N)
-    fixed_phase_shift_factor = intercept
-    origin = 0.0
+    w2 = np.abs(H).astype(np.float32)
+    ratios = H[1::1]/H[:-1:1]
+    xs, phases, slopes, intercepts, deltas, phis = [], [], [], [], [], []
+    for ratio in ratios:
+        x_auto, auto_unwrapped_phase, _ = phase_unwrap_auto(data=ratio)
+        slope, intercept = fitting_line(x=x_auto, y=auto_unwrapped_phase, filter=True, residual_th=1.2)
+        xs.append(x_auto.copy())
+        phases.append(auto_unwrapped_phase.copy())
+        slopes.append(slope)
+        intercepts.append(intercept)
+        deltas.append(slope / (symbol_len * (-2 * np.pi) / N))
+        phis.append(intercept)
+    origin = list()
     for idx in range(H.shape[0]):
-        origin += correct_H_f(
+        origin.append(correct_H_f(
             origin_H_f=H[idx],
-            delta=delta,
+            delta=np.sum(deltas[:idx+1]),
             N=N,
-            index=-idx,
+            index=-1,
             symbol_len=symbol_len,
-            fixed_phase_shift_factor=-fixed_phase_shift_factor
-        )
-    origin /= H.shape[0]
+            fixed_phase_shift_factor=np.sum(phis[:idx+1])
+        ))
+    origin = np.array(origin)
+
+    h_abs = np.abs(origin)
+    h_mean = np.mean(h_abs, axis=0)
+    h_std = np.std(h_abs, axis=0)
+    mask = np.where(h_abs < h_mean[:None] + h_std[:None], 1, 0)
+    w = np.where(mask, mask.shape[0]/np.sum(mask, axis=0), 0)
+    origin = np.average(origin, axis=0,weights=w)
+
     if not return_plot_args:
-        return float(delta), float(fixed_phase_shift_factor), origin
+        return np.array(deltas).astype(float), np.array(phis).astype(float), origin
     else:
         plot_args = {
-            'ratio_avg': ratio_avg,
-            'slope': slope,
-            'intercept': intercept,
-            'x_auto': x_auto,
-            'auto_unwrapped_phase': auto_unwrapped_phase,
-            'N':N
+            'ratio': ratios,
+            'slope': np.array(slopes),
+            'intercept': np.array(intercepts),
+            'x_auto': np.array(xs),
+            'auto_unwrapped_phase': np.array(phases),
+            'N': N
         }
-        return float(delta), float(fixed_phase_shift_factor), origin, plot_args
+        return np.array(deltas).astype(float), np.array(phis).astype(float), origin, plot_args
 
 # ========= 段构建 =========
 
@@ -210,8 +225,7 @@ def _pilot_quality(symbol_td: np.ndarray,
     )
 
     # 2) 用 H_pred 等化该 pilot 的星座
-    Xf = np.fft.fft(symbol_td) / H_pred
-    Xd = Xf[DATA_BINS]
+    Xd = get_constellation(symbols_td=symbol_td, H_used=H_pred, DATA_BINS=DATA_BINS)
     Rd = pilot_ref_fd[DATA_BINS]
 
     # 3) SNR / 质量
@@ -527,8 +541,7 @@ def analyze_pilots(symbols_td: np.ndarray,
         symbols_td = np.asarray(symbols_td)
         Hf = np.asarray(Hf)
         assert Hf.shape == (ns, N_loc) and symbols_td.shape == (ns, N_loc)
-        Xf = np.fft.fft(symbols_td, axis=1) / Hf
-        Xd = Xf[:, DATA_BINS]
+        Xd = get_constellation(symbols_td=symbols_td, H_used=Hf, DATA_BINS=DATA_BINS)
     else:
         Xd = symbols_fd[:,DATA_BINS]
 
@@ -779,9 +792,7 @@ def equalize_first_data_symbol(symbols_all_td: np.ndarray,
         index=1,
         fixed_phase_shift_factor=phi_step
     )
-    Y1 = np.fft.fft(symbols_all_td[0])
-    X1 = Y1 / H1
-    return X1[DATA_BINS]
+    return get_constellation(symbols_td=symbols_all_td[0], H_used=H1, DATA_BINS=DATA_BINS)
 
 def estimate_M_from_filesize(*, filesize_bytes: int, K: int, Ncw: int, Nd: int, modulation_bits: int, iteration: int) -> int:
     info_bits = int(filesize_bytes) * 8
