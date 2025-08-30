@@ -19,7 +19,7 @@ import warnings
 import numpy as np
 from typing import Dict, Tuple, Optional
 from scipy.signal import correlate as sp_correlate
-from .math_process import phase_unwrap_auto, fitting_line, weighted_mean_exclude_extrema
+from .math_process import phase_unwrap_auto, fitting_line
 from .ldpc_jossy import code
 from .demodulate import _qpsk_hard, QPSK_reflection, get_constellation
 

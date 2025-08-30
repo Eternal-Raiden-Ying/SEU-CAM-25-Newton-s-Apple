@@ -66,7 +66,7 @@ if __name__ == "__main__":
 
     rx = np.load(rx_pth)
     pilot = np.load(pilot_pth)
-    decoded_info, info = receiver_dev(rx, pilot, args)
+    decoded_info, info = receiver(rx, pilot, args)
     print(f"ldpc iter: {info['ldpc_iter']}")
     print(f"pre_ber: {info['pre_ber']}")
     print(f"post_ber: {info['post_ber']}")
