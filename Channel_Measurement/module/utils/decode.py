@@ -139,16 +139,8 @@ def ldpc_decode_blocks(*,
         head_bits = int(head_bytes) * 8
 
         # 解码前的“信息位硬判”流
-        pre_info_est_all = np.concatenate(pre_info_est_chunks, axis=0).astype(np.uint8)  # (nblocks*K,)
-
-        # 统一“剔头、对齐、截断到相同长度”
-        # 说明：groundtruth_bits 是“payload（已扰码）”，不含头部；decoded_info 含头部，需剔除
-        if pre_info_est_all.size > head_bits and decoded_info.size > head_bits:
-            pre_bits = pre_info_est_all[head_bits:]
-            post_bits = decoded_info[head_bits:]
-        else:
-            pre_bits = pre_info_est_all
-            post_bits = decoded_info
+        pre_bits = np.concatenate(pre_info_est_chunks, axis=0).astype(np.uint8)  # (nblocks*K,)
+        post_bits = decoded_info
 
         L = min(post_bits.size, int(groundtruth_bits.size))
         if L > 0:

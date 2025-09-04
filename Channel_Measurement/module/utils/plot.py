@@ -304,14 +304,18 @@ def plot_received_signal(rx, ofdm_start, num_symbols, N, cp_len, M):
     plt.axvline(ofdm_start + num_symbols * (N + cp_len), linestyle='dotted', color='red')
     plt.show()
 
-def plot_data_constellations(const, const_ref, *, data_pos=None):
+def plot_data_constellations(const, const_ref, *, data_pos=None, pic_idx=None):
     num_const, N = const.shape
     assert const_ref.shape == const.shape
     if data_pos is None:
         data_pos = np.arange(num_const)
-    n_rows, n_cols, figsize = auto_constellation_map_param(num_const)
-    pic_num = n_rows * n_cols
-    pic_idx = np.linspace(start=0, stop=0 + num_const // (pic_num - 1) * (pic_num - 1), num=pic_num).astype(np.int32)
+    if pic_idx is None:
+        n_rows, n_cols, figsize = auto_constellation_map_param(num_const)
+        pic_num = n_rows * n_cols
+        pic_idx = np.linspace(start=0, stop=0 + num_const // (pic_num - 1) * (pic_num - 1), num=pic_num).astype(np.int32)
+    else:
+        n_rows, n_cols, figsize = auto_constellation_map_param(pic_idx.size)
+        pic_num = n_rows * n_cols
     fig, axes = plt.subplots(n_rows, n_cols, figsize=figsize)
     for i, index in enumerate(pic_idx):
         ax = axes[i // n_cols, i % n_cols]

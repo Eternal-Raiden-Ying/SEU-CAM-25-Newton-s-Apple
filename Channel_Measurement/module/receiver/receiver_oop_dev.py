@@ -11,6 +11,7 @@ from ..utils.modulate import generate_chirp, serial_to_parallel, QPSK_mapping
 from ..utils.synchronize import synchronize
 from ..utils.decode import ldpc_decode_blocks
 from ..utils.io_interface import get_bits_from_file
+from ..utils.decoder_oop import OFDMSoftDecoder, DecoderConfig, SigmaTrackerConfig, PLLConfig
 from ..utils.plot import (plot_correlation, plot_received_signal, plot_original_constellations,
                           plot_corrected_constellations, plot_data_constellations, plot_unwrap_phase_fitting,
                           plot_impulse_response, plot_snr_over_time, plot_snr_over_subcarrier, plot_pre_post_ber)
@@ -50,9 +51,10 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
     chirp_len       = args.chirp_len
     chirp_l         = args.chirp_l
     chirp_h         = args.chirp_h
+    clockwise       = args.clockwise
     data_start      = args.data_start
     data_tail       = args.data_tail
-    INTERVAL        = args.INTERVAL
+    INTERVAL       = args.INTERVAL
     comb_seed_base  = args.COMB_PILOT_SEED_BASE
 
     groundtruth     = args.groundtruth
@@ -60,25 +62,9 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
     head_bit        = args.head_bit
 
     # modulate
-    clockwise       = args.clockwise
     scr_seed        = args.scrambler_seed
     scr_mode        = args.scrambler_mode
     scr_bitwidth    = args.scrambler_bitwidth
-
-    # LDPC
-    ldpc_standard   = args.ldpc_standard
-    ldpc_rate       = args.ldpc_rate
-    ldpc_z          = args.ldpc_z
-    ldpc_ptype      = args.ldpc_ptype
-    ldpc_device     = args.ldpc_device
-    ldpc_llr_clip   = args.ldpc_llr_clip
-    ldpc_max_iter   = args.ldpc_max_iter
-    ldpc_verbose    = args.ldpc_verbose
-    ldpc_log_every  = args.ldpc_log_every
-    ldpc_check_every= args.ldpc_check_every
-    ldpc_microbatch = args.ldpc_microbatch
-    ldpc_batch      = args.ldpc_batch
-    ldpc_print_iter = args.ldpc_print_iter
 
     # PLOT
     plot            = args.plot
@@ -95,10 +81,10 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
     Nd         = DATA_BINS.size
 
     code = ldpc_make_code(
-        standard=ldpc_standard, rate=ldpc_rate, z=ldpc_z, ptype=ldpc_ptype,
-        device=ldpc_device, llr_clip=ldpc_llr_clip, max_iter=ldpc_max_iter,
-        verbose=ldpc_verbose, log_every=ldpc_log_every, check_every=ldpc_check_every,
-        microbatch=ldpc_microbatch, print_iter=ldpc_print_iter
+        standard=args.ldpc_standard, rate=args.ldpc_rate, z=args.ldpc_z, ptype=args.ldpc_ptype,
+        device=args.ldpc_device, llr_clip=args.ldpc_llr_clip, max_iter=args.ldpc_max_iter,
+        verbose=args.ldpc_verbose, log_every=args.ldpc_log_every, check_every=args.ldpc_check_every,
+        microbatch=args.ldpc_microbatch, print_iter=args.ldpc_print_iter
     )
 
     # ---------------- 0) 时域同步（scipy.signal.correlate） ----------------
@@ -124,9 +110,22 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
 
     pilot_metrics = analyze_pilots(
         symbols_td=sym_pilot_td, pilot_ref=pilot, DATA_BINS=DATA_BINS, mode="front", clockwise=clockwise,
-        Hf=correct_H_f(origin_H_f=origin_H_f, N=N, index=np.arange(num_pilot),symbol_len=symbol_len,
+        Hf=correct_H_f(origin_H_f=origin_H_f, N=N, index=np.arange(num_pilot), symbol_len=symbol_len,
                        delta=delta0, fixed_phase_shift_factor=phi0)
     )
+
+    cfg = DecoderConfig(
+        N=args.N, cp_len=args.cp_len, DATA_BINS=DATA_BINS,
+        pll_cfg=PLLConfig(alpha=args.pll_alpha, snr_th_db=args.pll_snr_th_db,
+                        alpha_min=args.pll_alpha_min, alpha_max=args.pll_alpha_max,
+                        snr_th_min_db=args.pll_snr_th_min_db, snr_th_max_db=args.pll_snr_th_max_db,
+                        beta=args.pll_beta, snr_mid_db=args.pll_snr_mid_db, snr_scale=args.pll_snr_scale),
+        sigma_cfg=SigmaTrackerConfig(per_sc=args.sig_trk_per_sc, init_sigma=args.sig_trk_init_sigma,
+                                     alpha_max=args.sig_trk_alpha_max, alpha_min=args.sig_trk_alpha_min),
+    )
+    dec = OFDMSoftDecoder(cfg)
+    dec.init_from_preamble(sym_pilot_td, pilot)
+
 
     if print_flag:
         print(f"delta:{delta0}")
@@ -238,7 +237,7 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
         const_mmse_T = mmse_shrinkage(const_pll_T, Habs2_T, sigmas_T)
 
         # LLR + 按 per-SC SNR(dB) 缩放
-        llr_raw_T, stat_T = llr_from_constellation(const_mmse_T, llr_clip=ldpc_llr_clip, clockwise=clockwise)
+        llr_raw_T, stat_T = llr_from_constellation(const_mmse_T, llr_clip=args.ldpc_llr_clip, clockwise=clockwise)
         scale_sc_T = llr_scale_by_snr(stat_T["snr_db_per_sc"], lo=2.0, hi=10.0, min_scale=0.4, max_scale=1.0)
         llr_scaled_T = (llr_raw_T.reshape(-1, Nd, 2) * scale_sc_T[:, :, None]).reshape(-1, Nd*2)
 
@@ -273,6 +272,7 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
     M_total = int(min(M_total, M_guess)) if head_bit else M_guess
 
     # ---------------- 4) 基于 M_total 的完整处理 ----------------
+    if print_flag: print_padded("begin to analyze OFDM symbols", print_len, print_pad)
     # Groundtruth
     if groundtruth:
         assert tx_file_path is not None, "groundtruth=True 需要提供 --tx_file_path"
@@ -284,93 +284,44 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
     all_idx = np.arange(M_total)
     pilot_pos = all_idx[(all_idx % (INTERVAL + 1)) == INTERVAL]
     data_pos = all_idx[(all_idx % (INTERVAL + 1)) != INTERVAL]
-    if plot and plot_opt['received_signal']:
-        plot_received_signal(rx, ofdm_start, num_pilot, N, cp_len, M_total)
-
-    # comb 参考与 H(f)
-    if print_flag: print_padded("begin to analyze comb pilot", print_len, print_pad)
     n_comb = pilot_pos.size
     pilot_ref_comb_fd = (np.stack(
         [generate_comb_pilot_symbol(N, comb_seed_base + i) for i in range(n_comb)], axis=0
     ) if n_comb else np.zeros((0, N), complex))
-    symbols_comb_td = (symbols_all_td[pilot_pos] if n_comb else np.zeros((0, N), complex))
-    Hf_comb = evaluate_H_f(symbols_comb_td, pilot_ref_comb_fd) if n_comb else np.zeros((0, N), complex)
 
-    # 段构建
-    pilot_pred_param, seg = build_segments_from_pilots(
-        H_start=Hf_pilot[-1], Hf_comb=Hf_comb,
-        pilot_pos=pilot_pos, M=M_total, DATA_BINS=DATA_BINS, q_comb=None, mode="quality_distance",
-        symbol_len=symbol_len, N=N, delta_global=delta0, phi_global=phi0,
-        symbols_comb_td=symbols_comb_td, pilot_ref_comb_fd=pilot_ref_comb_fd
+    out = dec.process_sequence(
+        symbols_td=symbols_all_td,  # [M, N] 数据+comb（已去CP）
+        comb_pilot_pos=pilot_pos,  # [n_comb]
+        data_pos=data_pos,  # [n_data]
+        pilot_ref_comb_fd=pilot_ref_comb_fd  # [n_comb, N]
     )
 
-    comb_metrics = (analyze_pilots(
-        symbols_td=symbols_comb_td, pilot_ref=pilot_ref_comb_fd,
-        DATA_BINS=DATA_BINS, mode="comb", clockwise=clockwise,
-        Hf=correct_H_f(origin_H_f=pilot_pred_param['H_start'], delta=pilot_pred_param['delta'],
-                       fixed_phase_shift_factor=pilot_pred_param['phi'], index=pilot_pred_param['gap'],
-                       N=N, symbol_len=symbol_len)
-        ) if n_comb else {"q": np.array([]), "snr_db_med": np.array([])})
-
-
-    if plot and plot_opt['snr_time_comb']:
-        plot_snr_over_time(comb_metrics["snr_db_med"], title="Comb Pilot SNR over OFDM symbols")
-    if print_flag:
-        print_dict_values(pilot_pred_param, 'delta',[f"{i}: pilot {index}" for i, index in enumerate(pilot_pos)])
-        print_padded("comb pilot analysis done", print_len, print_pad)
-
-    # 外推 H_used（两路 + 权重融合）
-    H_used_from_start = correct_H_f(
-        origin_H_f=seg["H_start_per_seg"], index=seg["dt_from_start_per_sym"], N=N, symbol_len=symbol_len,
-        delta=seg["delta_per_seg"], fixed_phase_shift_factor=seg["phi_per_seg"])
-    H_used_from_near = correct_H_f(
-        origin_H_f=seg["H_near_per_sym"], index=seg["dt_from_near_per_sym"], N=N, symbol_len=symbol_len,
-        delta=seg["delta_per_seg_per_sym"], fixed_phase_shift_factor=seg["phi_per_seg_per_sym"])
-
-    w1, w2 = seg["w1_per_sym"], seg["w2_per_sym"]
-    H_used = (H_used_from_start * w1[:, None] + H_used_from_near * w2[:, None]) / (w1[:, None] + w2[:, None] + 1e-12)
-
-    if print_flag: print_padded("begin to analyze data symbols", print_len, print_pad)
-    sym_data_td = symbols_all_td[data_pos].reshape(-1, N)
-    const_zf = get_constellation(sym_data_td, H_used, DATA_BINS=DATA_BINS)
-    pll_snr_med = pll_snr_median(const_zf)
-    const_pll = apply_cpe_pll_sequence(
-        const_zf, pll_snr_med,
-        alpha=getattr(args, "pll_alpha", 0.15),
-        snr_th_db=getattr(args, "pll_snr_th_db", 6.0),
-        alpha_min=getattr(args, "pll_alpha_min", 0.05),
-        alpha_max=getattr(args, "pll_alpha_max", 0.50),
-        snr_th_min_db=getattr(args, "pll_snr_min_db", 3.0),
-        snr_th_max_db=getattr(args, "pll_snr_max_db", 10.0),
-        beta=getattr(args, "pll_beta", 0.9),
-        snr_mid_db=getattr(args, "pll_snr_mid_db", 6.0),
-        snr_scale=getattr(args, "pll_snr_scale", 4.0),
-    )
-
-    # 噪声/收缩
-    sigmas = robust_sigma(const_pll)
-    Habs2 = np.abs(H_used[:, DATA_BINS])**2
-    const_mmse = mmse_shrinkage(const_pll, Habs2, sigmas)
+    const = out["const"]  # [n_data, Nd] —— 已是 MMSE 收缩后的星座
+    snr = out["snr_med_db"]  # [n_data]
+    sigma_r, sigma_i = out["sigma_r"], out["sigma_i"]
     if groundtruth:
         const_ref = QPSK_mapping(serial_to_parallel(gt_bits_ldpc, N=(Nd + 1) * 2))
-        data_metrics = analyze_pilots(pilot_ref=const_ref, symbols_fd=const_mmse,DATA_BINS=np.arange(Nd),
+        data_metrics = analyze_pilots(pilot_ref=const_ref, symbols_fd=const,DATA_BINS=np.arange(Nd),
                                       symbols_td=None, Hf=None,clockwise=clockwise, mode='data')
         if plot and plot_opt['snr_time_data']:
             plot_snr_over_time(data_metrics["snr_db_med"], title="Data symbol SNR over OFDM symbols")
         if plot and plot_opt['data_constellation']:
-            plot_data_constellations(const=const_mmse, data_pos=data_pos, const_ref=const_ref)
+            plot_data_constellations(const=const, data_pos=data_pos, const_ref=const_ref)
         if plot and plot_opt['snr_over_sc']:
-            plot_snr_over_subcarrier(np.mean(snr_from_constellation(const_mmse, const_ref), axis=0),
+            plot_snr_over_subcarrier(np.mean(snr_from_constellation(const, const_ref), axis=0),
                                      sc_idx=DATA_BINS, title="Average SNR over subcarriers (Data)")
-    if print_flag: print_padded("data symbols analysis done", print_len, print_pad)
+    if print_flag:
+        print_padded("OFDM symbols analysis done", print_len, print_pad)
+        hist = dec.get_drift_history("accepted")
+        print("accepted idx :", hist["idx"])
+        print("accepted dlt :", hist["delta"])
+        print("accepted phi :", hist["phi"])
 
-    # LLR + 按 per-SC SNR(dB) 缩放
-    if print_flag: print_padded("begin to process and decode llr", print_len, print_pad)
-    llr_raw, stat = llr_from_constellation(const_mmse, llr_clip=ldpc_llr_clip)
+    llr_raw, stat = llr_from_constellation(const, llr_clip=args.ldpc_llr_clip, clockwise=args.clockwise)
     scale_sc = llr_scale_by_snr(stat["snr_db_per_sc"], lo=2.0, hi=10.0, min_scale=0.4, max_scale=1.0)
-    llr_scaled = (llr_raw.reshape(-1, Nd, 2) * scale_sc[:, :, None]).reshape(-1, Nd*2)
+    llr_scaled = (llr_raw.reshape(const.shape[0], -1, 2) * scale_sc[:, :, None]).reshape(const.shape[0], -1)
 
-    # 打包 LLR（形状需一致）
+    # 打包 LLR
     ofdm_idx = np.repeat(data_pos[:, None], Nd*2, axis=1)
     freq_axis_full = np.linspace(0.0, fs, N, endpoint=False)
     sub_carr_freq = np.repeat(np.repeat(freq_axis_full[DATA_BINS], 2)[None, :], data_pos.size, axis=0)
@@ -381,7 +332,7 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
         code=code,
         groundtruth_bits=gt_bits_scr if groundtruth else None,
         head_bytes=head_bit//8,  # 64bit 头
-        batch=ldpc_batch
+        batch=args.ldpc_batch
     )
 
     if plot and plot_opt['BER_show']:
@@ -394,7 +345,7 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
     info = {
         "M": int(M_total),
         "pilot_metrics": pilot_metrics,
-        "comb_metrics": comb_metrics,
+        # "comb_metrics": comb_metrics,
         "ldpc_iter": it,
         "pre_ber": np.mean(pre_ber),
         "post_ber": np.mean(post_ber),

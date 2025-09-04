@@ -135,13 +135,16 @@ def phase_unwrap_auto(
     q_keep: float = 0.7,                 # 保留幅度最高的比例（quantile 模式）
     # unwrap 初值的 discont 候选集合
     discont_candidates = (np.pi, 1.05*np.pi, 1.1*np.pi, 1.2*np.pi, 1.3*np.pi, 1.4*np.pi, 1.5*np.pi, 1.7*np.pi),
+    # discont_candidates = (np.pi,  1.1*np.pi, 1.3*np.pi, 1.4*np.pi, 1.5*np.pi, 1.7*np.pi),
     # 滑窗搜索配置（占比范围、最小样本数）
-    win_frac_range = (0.05, 0.8),
-    min_win_len: int = 32,
+    win_frac_range = (0.2, 0.8),
+    min_win_len: int = 50,
     # 是否对跨 0 频的窗口加一点偏好（通常更线性）
     center_bias: bool = True,
     # 展开后是否再做一次全段稳健微调
     refine_full_fit: bool = True,
+    penal_factor: float = 1e3,
+    penal_bound:  float = 1e-2
 ):
     """
     自适应一维相位展开（智能选线性片段 + 多discont择优 + 稳健拟合）
@@ -217,18 +220,21 @@ def phase_unwrap_auto(
                 ys_unw = y_unw0[sl]
                 # 在粗 unwrap 上做稳健线性拟合
                 s, b = _robust_line_fit(xs, ys_unw)
+                k = round(b / (2 * np.pi))
+                b = b - - 2 * np.pi * k
 
                 # 用原始相位(未 unwrap)的“圆残差 MAD”作为评分
-                fit = s * xs + b
-                score = _mad(_circ_diff(y[sl], fit))
-
+                fit = s * x + b
+                y_score = y + 2 * np.pi * np.round((fit - y) / (2 * np.pi))
+                # score = (_mad(y_score - fit) + penal_factor * np.abs(s)) if np.abs(s) > penal_bound else _mad(y_score - fit)
+                score = (_mad(y_score - fit))
                 if score < best['score']:
                     best = {
                         'score': score,
                         'discont': d,
                         'slope': s,
                         'intercept': b,
-                        'win_idx': start,
+                        'win_idx': x[start],
                         'win_len': L
                     }
 

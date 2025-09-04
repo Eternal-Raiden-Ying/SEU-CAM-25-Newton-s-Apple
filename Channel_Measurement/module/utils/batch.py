@@ -23,6 +23,8 @@ from .math_process import phase_unwrap_auto, fitting_line
 from .ldpc_jossy import code
 from .demodulate import _qpsk_hard, QPSK_reflection, get_constellation
 
+
+
 # ========= EVM / SNR =========
 def evm_from_constellation(const: np.ndarray, ref: np.ndarray) -> np.ndarray:
     """
@@ -132,7 +134,6 @@ def estimate_drift_and_origin(Hf_seq: np.ndarray, *, N: int, symbol_len: int, re
     """
     H = np.asarray(Hf_seq)
     assert H.ndim == 2
-    w2 = np.abs(H).astype(np.float32)
     ratios = H[1::1]/H[:-1:1]
     xs, phases, slopes, intercepts, deltas, phis = [], [], [], [], [], []
     for ratio in ratios:
@@ -164,7 +165,7 @@ def estimate_drift_and_origin(Hf_seq: np.ndarray, *, N: int, symbol_len: int, re
     origin = np.average(origin, axis=0,weights=w)
 
     if not return_plot_args:
-        return np.array(deltas).astype(float), np.array(phis).astype(float), origin
+        return np.mean(deltas).astype(float), np.mean(phis).astype(float), origin
     else:
         plot_args = {
             'ratio': ratios,
@@ -174,11 +175,11 @@ def estimate_drift_and_origin(Hf_seq: np.ndarray, *, N: int, symbol_len: int, re
             'auto_unwrapped_phase': np.array(phases),
             'N': N
         }
-        return np.array(deltas).astype(float), np.array(phis).astype(float), origin, plot_args
+        return np.mean(deltas).astype(float), np.mean(phis).astype(float), origin, plot_args
 
 # ========= 段构建 =========
 
-def _fit_drift_between(H_start, H_end, gap, N, * , symbol_len=None, return_phi=False):
+def _fit_drift_between(H_start, H_end, gap, N, * , symbol_len=None, return_phi=False, plot=False):
     """
     用两个时间点（相隔 gap 个 OFDM）的信道估计做比值，拟合得到“每 OFDM”的
     频偏斜率 delta 以及常相位步进 phi。
@@ -193,6 +194,9 @@ def _fit_drift_between(H_start, H_end, gap, N, * , symbol_len=None, return_phi=F
     phase_shift = H_end / H_start
     x_auto, auto_unwrapped_phase, _ = phase_unwrap_auto(data=phase_shift )
     slope, intercept = fitting_line(x=x_auto, y=auto_unwrapped_phase, filter=True, residual_th=1.5)
+    if plot:
+        from .plot import plot_unwrap_phase_fitting
+        plot_unwrap_phase_fitting(phase_shift, slope, intercept,x_auto, auto_unwrapped_phase, N)
 
     delta = slope / (symbol_len * (-2 * np.pi) / N) / gap
     phi_step = intercept / gap  # 每“一个”符号的常相位步进
@@ -348,7 +352,7 @@ def build_segments_from_pilots(H_start: np.ndarray,
     if Hf_comb.size > 0 and pilot_pos.size > 0:
         for j, pidx in enumerate(pilot_pos):
             gap = int(pidx - prev_idx)
-            d_j, p_j = _fit_drift_between(H_ref, Hf_comb[j], gap, N=N, symbol_len=symbol_len, return_phi=True)
+            d_j, p_j = _fit_drift_between(H_ref, Hf_comb[j], gap, N=N, symbol_len=symbol_len, return_phi=True, plot=False)
             H_s_list.append(H_ref.copy())
             d_list.append(d_j)
             p_list.append(p_j)
@@ -574,77 +578,6 @@ def analyze_pilots(symbols_td: np.ndarray,
 
 # ========= 等化 / PLL / 噪声 / 收缩 / LLR =========
 
-class DD_CPE_PLL:
-    """
-    判决导向（DD）公共相位误差（CPE）一阶环，自适应步长与门限。
-    - theta: 累计相位
-    - alpha_t: 每步自适应步长 ∈ [alpha_min, alpha_max]
-    - snr_th_t: 每步自适应 SNR 门限 ∈ [snr_th_min_db, snr_th_max_db]
-    """
-    def __init__(self,
-                 alpha: float = 0.15,
-                 snr_th_db: float = 6.0,
-                 *,
-                 alpha_min: float = 0.05,
-                 alpha_max: float = 0.30,
-                 snr_th_min_db: float = 3.0,
-                 snr_th_max_db: float = 10.0,
-                 beta: float = 0.9,         # EMA 动量系数
-                 snr_mid_db: float = 6.0,   # 置信度中心
-                 snr_scale: float = 4.0):   # 置信度 SNR 缩放
-        self.theta = 0.0
-        self.alpha0 = float(alpha)
-        self.snr_th0 = float(snr_th_db)
-        self.alpha_min = float(alpha_min)
-        self.alpha_max = float(alpha_max)
-        self.snr_th_min_db = float(snr_th_min_db)
-        self.snr_th_max_db = float(snr_th_max_db)
-        self.beta = float(beta)
-        self.snr_mid_db = float(snr_mid_db)
-        self.snr_scale = float(snr_scale)
-        self.ema_e = 0.0
-        self.ema_snr_db = snr_th_db
-
-    @staticmethod
-    def _wrap_pi(x: float) -> float:
-        return (x + np.pi) % (2*np.pi) - np.pi
-
-    def _confidence(self, snr_db: float, e_abs: float) -> float:
-        # SNR 置信（sigmoid），误差置信（越小越好）
-        c_snr = 1.0 / (1.0 + np.exp(-(snr_db - self.snr_mid_db) / max(1e-6, self.snr_scale)))
-        c_err = max(0.0, 1.0 - (e_abs / (np.pi/2.0)))
-        return float(np.clip(c_snr * c_err, 0.0, 1.0))
-
-    def step(self, const: np.ndarray, snr_med_db: float, hard: np.ndarray | None = None) -> np.ndarray:
-        """
-        输入单个符号的星座（[Nd]），以及该符号的中位 SNR(dB)；返回校正后的星座。
-        """
-        s = np.asarray(const).ravel()
-        if hard is None:
-            hard = _qpsk_hard(s)
-
-        # 当前误差（“正”号定义）：在当前 theta 下，把 s 旋回去与 hard 对齐
-        e = np.angle(np.vdot(hard, s * np.exp(-1j * self.theta)))
-        e_abs = abs(e)
-
-        # EMA（动量）
-        self.ema_e = self.beta * self.ema_e + (1 - self.beta) * e_abs
-        self.ema_snr_db = self.beta * self.ema_snr_db + (1 - self.beta) * float(snr_med_db)
-
-        # 自适应参数
-        conf = self._confidence(self.ema_snr_db, self.ema_e)
-        alpha_t = np.clip(self.alpha_min + (self.alpha_max - self.alpha_min) * conf,
-                          self.alpha_min, self.alpha_max)
-        snr_th_t = np.clip(self.snr_th_min_db + (self.snr_th_max_db - self.snr_th_min_db) * (1.0 - conf),
-                           self.snr_th_min_db, self.snr_th_max_db)
-
-        # 更新与旋转
-        if (snr_med_db >= snr_th_t) and (e_abs < np.pi/2):
-            self.theta = self._wrap_pi(self.theta + alpha_t * e)
-
-        return s * np.exp(-1j * self.theta)
-
-
 def apply_cpe_pll_sequence(constellations: np.ndarray,
                            snr_med_db: np.ndarray,
                            *,
@@ -663,11 +596,16 @@ def apply_cpe_pll_sequence(constellations: np.ndarray,
     constellations = np.asarray(constellations)
     snr_med_db = np.asarray(snr_med_db).reshape(-1,)
     assert constellations.ndim == 2 and constellations.shape[0] == snr_med_db.size
-
-    pll = DD_CPE_PLL(alpha=alpha, snr_th_db=snr_th_db,
-                     alpha_min=alpha_min, alpha_max=alpha_max,
-                     snr_th_min_db=snr_th_min_db, snr_th_max_db=snr_th_max_db,
-                     beta=beta, snr_mid_db=snr_mid_db, snr_scale=snr_scale)
+    from .decoder_oop import PLLConfig, DD_CPE_PLL
+    pll_cfg = PLLConfig(alpha=alpha, snr_th_db=snr_th_db,
+                        alpha_min=alpha_min, alpha_max=alpha_max,
+                        snr_th_min_db=snr_th_min_db, snr_th_max_db=snr_th_max_db,
+                        beta=beta, snr_mid_db=snr_mid_db, snr_scale=snr_scale)
+    pll = DD_CPE_PLL(pll_cfg)
+    # pll = DD_CPE_PLL(alpha=alpha, snr_th_db=snr_th_db,
+    #                  alpha_min=alpha_min, alpha_max=alpha_max,
+    #                  snr_th_min_db=snr_th_min_db, snr_th_max_db=snr_th_max_db,
+    #                  beta=beta, snr_mid_db=snr_mid_db, snr_scale=snr_scale)
     out = np.empty_like(constellations)
     for i in range(constellations.shape[0]):
         out[i] = pll.step(constellations[i], float(snr_med_db[i]))
@@ -711,18 +649,49 @@ def robust_sigma(constellations: np.ndarray) -> Dict[str, np.ndarray]:
 def mmse_shrinkage(constellations: np.ndarray,
                    Habs2: np.ndarray,
                    sigmas: Dict[str, np.ndarray]) -> np.ndarray:
+    """
+    支持 const: [Nd] 或 [B, Nd]
+         Habs2: 标量 / [Nd] / [B] / [B,Nd]
+         sigma_r/sigma_i: 标量 / [Nd] / [B] / [B,Nd]
+    """
     s = np.asarray(constellations)
-    if s.ndim == 1:
+    s2d = s.ndim == 2
+    if not s2d:
         s = s[None, :]
-        H2 = np.asarray(Habs2)[None, :]
-        N0 = 0.5*(sigmas["sigma_r"]**2 + sigmas["sigma_i"]**2).reshape(1,1)
-    else:
-        H2 = np.asarray(Habs2)
-        N0 = 0.5*(sigmas["sigma_r"]**2 + sigmas["sigma_i"]**2).reshape(-1,1)
-    H2 = np.clip(H2, 1e-12, None)
-    shrink = H2 / (H2 + np.clip(N0, 1e-12, None))
+    B, Nd = s.shape
+
+    def to_2d(a):
+        a = np.asarray(a)
+        if a.ndim == 0:
+            return np.full((B, Nd), float(a), dtype=float)
+        if a.ndim == 1:
+            if a.shape[0] == Nd:
+                return np.broadcast_to(a[None, :], (B, Nd)).astype(float, copy=False)
+            if a.shape[0] == B:
+                return np.broadcast_to(a[:, None], (B, Nd)).astype(float, copy=False)
+            raise ValueError(f"Shape {a.shape} incompatible with (B={B}, Nd={Nd})")
+        if a.ndim == 2:
+            if a.shape == (B, Nd):
+                return a.astype(float, copy=False)
+            if a.shape == (1, Nd):
+                return np.broadcast_to(a, (B, Nd)).astype(float, copy=False)
+            if a.shape == (B, 1):
+                return np.broadcast_to(a, (B, Nd)).astype(float, copy=False)
+            raise ValueError(f"Shape {a.shape} incompatible with (B,Nd)=({B},{Nd})")
+        raise ValueError(f"Unsupported ndim={a.ndim}")
+
+    H2   = to_2d(Habs2)
+    sigR = to_2d(sigmas["sigma_r"])
+    sigI = to_2d(sigmas["sigma_i"])
+    N0   = 0.5 * (sigR**2 + sigI**2)
+
+    H2   = np.clip(H2, 1e-12, None)
+    N0   = np.clip(N0, 1e-12, None)
+    shrink = H2 / (H2 + N0)
+
     out = s * shrink
-    return out if constellations.ndim == 2 else out[0]
+    return out if s2d else out[0]
+
 
 def llr_from_constellation(constellations: np.ndarray,
                            *, mod: str = "QPSK",
@@ -758,6 +727,7 @@ def llr_from_constellation(constellations: np.ndarray,
 
     L0 = np.clip(L0, -llr_clip, llr_clip)
     L1 = np.clip(L1, -llr_clip, llr_clip)
+
     llr = np.stack([L0, L1], axis=-1).reshape(s.shape[0], -1).astype(np.float32)
 
     # 供外部缩放参考的 per-SC SNR(dB)
@@ -794,13 +764,13 @@ def equalize_first_data_symbol(symbols_all_td: np.ndarray,
     )
     return get_constellation(symbols_td=symbols_all_td[0], H_used=H1, DATA_BINS=DATA_BINS)
 
-def estimate_M_from_filesize(*, filesize_bytes: int, K: int, Ncw: int, Nd: int, modulation_bits: int, iteration: int) -> int:
+def estimate_M_from_filesize(*, filesize_bytes: int, K: int, Ncw: int, Nd: int, modulation_bits: int, interval: int) -> int:
     info_bits = int(filesize_bytes) * 8
     n_codewords = (info_bits + K - 1) // K
     coded_bits = n_codewords * Ncw
     bits_per_ofdm = Nd * modulation_bits
     data_syms = (coded_bits + bits_per_ofdm - 1) // bits_per_ofdm
-    comb_syms = data_syms // max(1, iteration)
+    comb_syms = np.ceil(data_syms/interval) - 1 if interval else 0
     return int(data_syms + comb_syms)
 
 def pll_snr_median(const_zf: np.ndarray) -> np.ndarray:

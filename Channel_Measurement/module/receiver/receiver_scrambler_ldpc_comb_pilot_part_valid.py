@@ -52,7 +52,7 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
     chirp_h         = args.chirp_h
     data_start      = args.data_start
     data_tail       = args.data_tail
-    ITERATION       = args.ITERATION
+    INTERVAL        = args.INTERVAL
     comb_seed_base  = args.COMB_PILOT_SEED_BASE
 
     groundtruth     = args.groundtruth
@@ -117,9 +117,7 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
     sym_pilot_td = get_symbols(rx_pilot_td, cp_len=cp_len, N=N)         # [num_pilot, N] 时域
     Hf_pilot = evaluate_H_f(sym_pilot_td, pilots_fd=pilot)              # [num_pilot, N]
     res_arg = estimate_drift_and_origin(Hf_pilot, N=N, symbol_len=symbol_len, return_plot_args=plot_opt['unwrap'])
-    deltas, phis, origin_H_f = res_arg[0], res_arg[1], res_arg[2]
-    delta0 = np.mean(deltas)
-    phi0 = np.mean(phis)
+    delta0, phi0, origin_H_f = res_arg[0], res_arg[1], res_arg[2]
     freq_bias = fs / (delta0 + 1) - fs
 
     pilot_metrics = analyze_pilots(
@@ -161,7 +159,6 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
     rx_data_td = rx[ofdm_start + num_pilot * (N + cp_len):]
     symbols_all_td = get_symbols(rx_data_td, N=N, cp_len=cp_len)        # [M_guess, N]
     M_guess = symbols_all_td.shape[0]
-    M_guess = 299
 
     if head_bit:
         if print_flag: print_padded("begin to analyze file head", print_len, print_pad)
@@ -169,13 +166,13 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
         # ---------------- 3) 先解出 64-bit 头所需的最小数据 ----------------
         #   64bit 头定义：LDPC 解码后的信息比特，再通过 scrambler 的前 64 bit。
         #   先构造 LDPC 码，决定需要多少 ofdm 数据符号（考虑 comb）
-        T = estimate_M_from_filesize(filesize_bytes=head_bit//8, K=code.K, Ncw=code.N, Nd=Nd,
-                                     modulation_bits=2, iteration=ITERATION)
+        T = estimate_M_from_filesize(filesize_bytes=head_bit // 8, K=code.K, Ncw=code.N, Nd=Nd, modulation_bits=2,
+                                     interval=INTERVAL)
         T = min(T, M_guess)                     # 防越界
 
         idx_T = np.arange(T)
-        pilot_pos_T = idx_T[(idx_T % (ITERATION + 1)) == ITERATION]   # comb 位置
-        data_pos_T = idx_T[(idx_T % (ITERATION + 1)) != ITERATION]   # 数据符号位置
+        pilot_pos_T = idx_T[(idx_T % (INTERVAL + 1)) == INTERVAL]   # comb 位置
+        data_pos_T = idx_T[(idx_T % (INTERVAL + 1)) != INTERVAL]   # 数据符号位置
 
         # comb 参考与 H(f)
         n_comb_T = pilot_pos_T.size
@@ -265,9 +262,8 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
         file_bytes = int(np.ceil(file_bits / 8.0))
 
         # 用 64bit 头推断总 OFDM 数（含 comb）
-        M_total = estimate_M_from_filesize(
-            filesize_bytes=file_bytes, K=code.K, Ncw=code.N, Nd=Nd, modulation_bits=2, iteration=ITERATION
-        )
+        M_total = estimate_M_from_filesize(filesize_bytes=file_bytes, K=code.K, Ncw=code.N, Nd=Nd, modulation_bits=2,
+                                           interval=INTERVAL)
         if print_flag: print_padded("file head analysis done", print_len, print_pad)
 
 
@@ -279,12 +275,14 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
         assert tx_file_path is not None, "groundtruth=True 需要提供 --tx_file_path"
         print(f"use groundtruth, tx_file_path: {tx_file_path}")
         gt_bits_raw = get_bits_from_file(tx_file_path)
+        if head_bit:
+            gt_bits_raw = np.concatenate([head64, gt_bits_raw])
         gt_bits_scr = scramble_bits(gt_bits_raw, seed=scr_seed, mode=scr_mode, bit_width=scr_bitwidth)
         gt_bits_ldpc, _ = ldpc_encode_bits(gt_bits_scr, c=code)
 
     all_idx = np.arange(M_total)
-    pilot_pos = all_idx[(all_idx % (ITERATION + 1)) == ITERATION]
-    data_pos = all_idx[(all_idx % (ITERATION + 1)) != ITERATION]
+    pilot_pos = all_idx[(all_idx % (INTERVAL + 1)) == INTERVAL]
+    data_pos = all_idx[(all_idx % (INTERVAL + 1)) != INTERVAL]
     if plot and plot_opt['received_signal']:
         plot_received_signal(rx, ofdm_start, num_pilot, N, cp_len, M_total)
 
@@ -317,7 +315,10 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
     if plot and plot_opt['snr_time_comb']:
         plot_snr_over_time(comb_metrics["snr_db_med"], title="Comb Pilot SNR over OFDM symbols")
     if print_flag:
-        print_dict_values(pilot_pred_param, 'delta',[f"{i}: pilot {index}" for i, index in enumerate(pilot_pos)])
+        print('index    delta           phi')
+        print_dict_values(pilot_pred_param, ['delta', 'phi'],[f"{i}: pilot {index}" for i, index in enumerate(pilot_pos)])
+        print('index      snr         ber')
+        print_dict_values(comb_metrics, ['snr_db_med', 'ber'],[f"{i}: pilot {index}" for i, index in enumerate(pilot_pos)])
         print_padded("comb pilot analysis done", print_len, print_pad)
 
     # 外推 H_used（两路 + 权重融合）
@@ -356,6 +357,9 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
         const_ref = QPSK_mapping(serial_to_parallel(gt_bits_ldpc, N=(Nd + 1) * 2))
         data_metrics = analyze_pilots(pilot_ref=const_ref, symbols_fd=const_mmse,DATA_BINS=np.arange(Nd),
                                       symbols_td=None, Hf=None,clockwise=clockwise, mode='data')
+        print('index      snr         ber')
+        print_dict_values(data_metrics, ['snr_db_med', 'ber'],
+                          [f"{i}: data {index}" for i, index in enumerate(data_pos)])
         if plot and plot_opt['snr_time_data']:
             plot_snr_over_time(data_metrics["snr_db_med"], title="Data symbol SNR over OFDM symbols")
         if plot and plot_opt['data_constellation']:

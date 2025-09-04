@@ -3,6 +3,7 @@ import argparse
 import numpy as np
 from module.receiver.receiver_scrambler_ldpc_comb_pilot_part_valid import receiver
 from module.receiver.receiver_develop import receiver as receiver_dev
+from module.receiver.receiver_oop_dev import receiver as receiver_oop
 
 
 project_dir = r"D:\Documents\Coding\Python\SEUCAM"
@@ -17,18 +18,18 @@ if __name__ == "__main__":
         if not os.path.exists(dir_name):
             os.makedirs(dir_name)
 
-    rx_pth = r"D:\Documents\Coding\Python\SEUCAM\Channel Measurement\temp\received_tiff_chirp_l2_10_24k_fs48k_N8192_cp1024_S8diff_R1-2_Z27_802.11n_A_random_middle_0.8_2.npy"
+    rx_pth = r"D:\Documents\Coding\Python\SEUCAM\Channel Measurement\temp\received_txt_chirp_l2_10_24k_fs48k_N8192_cp1024_S8diff_R1-2_Z27_802.11n_A_random_middle_0.8_long_head_1.npy"
     pilot_pth = r'D:\Documents\Coding\Python\SEUCAM\Channel Measurement\record\LDPC\pilot_different_txt820_seed256_part0.8_comb.npy'
 
     plot_opt = {
         'correlation':                      False,
-        'impulse_response':                 True,
+        'impulse_response':                 False,
         'raw_pilot_constellation':          False,
-        'corrected_pilot_constellation':    True,
+        'corrected_pilot_constellation':    False,
         'data_constellation':               True,
         'unwrap':                           True,
         'received_signal':                  False,
-        'BER_show':                         False,
+        'BER_show':                         True,
         'snr_time_pilot':                   False,  # 导频阶段的平均 SNR(随符号)曲线
         'snr_time_comb':                    False,
         'snr_time_data':                    False,  # 数据阶段（判决导向统计）的 SNR(随符号)曲线
@@ -42,22 +43,24 @@ if __name__ == "__main__":
         # chirp param
         data_start=409, data_tail=409,
         # comb param
-        ITERATION=10, COMB_PILOT_SEED_BASE=128,
+        INTERVAL=10, COMB_PILOT_SEED_BASE=128,
         # groundtruth
-        groundtruth=True, head_bit=0,
-        tx_file_path=r"D:\Documents\Coding\Python\SEUCAM\Channel Measurement\temp\Jossy origin.tiff",
+        groundtruth=True, head_bit=64,
+        tx_file_path=r"D:\Documents\Coding\Python\SEUCAM\Channel Measurement\temp\shakespace_poem_middle(1).txt",
         # scrambler param
         scrambler_seed=256, scrambler_mode='random', scrambler_bitwidth=None, clockwise=False,
         # ldpc param
         ldpc_standard="802.11n", ldpc_rate="1/2", ldpc_z=27, ldpc_ptype="A",
-        ldpc_device="cuda", ldpc_llr_clip=20.0, ldpc_max_iter=200,
+        ldpc_device="cuda", ldpc_llr_clip=10.0, ldpc_max_iter=200,
         ldpc_verbose=False, ldpc_log_every=1, ldpc_check_every=1,
-        ldpc_microbatch=256, ldpc_batch=512, ldpc_print_iter=False,
+        ldpc_microbatch=256, ldpc_batch=512, ldpc_print_iter=True,
         # CPE PLL param
-        pll_alpha=0.15, pll_snr_th_d=6.0,
+        pll_alpha=0.15, pll_snr_th_db=6.0,
         pll_alpha_min=0.05, pll_alpha_max=0.50,
-        pll_snr_min_db=3.0, pll_snr_max_db=10.0,
+        pll_snr_th_min_db=3.0, pll_snr_th_max_db=10.0,
         pll_beta=0.9, pll_snr_mid_db=6.0, pll_snr_scale=4.0,
+        # sigma tracker
+        sig_trk_per_sc=True, sig_trk_alpha_min=0.05, sig_trk_alpha_max=0.7, sig_trk_init_sigma=0.3,
         # plot settings
         plot=True, plot_opt=plot_opt,
         # print settings
