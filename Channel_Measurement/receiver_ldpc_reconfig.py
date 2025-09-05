@@ -42,7 +42,7 @@ output_dir = os.path.join(project_dir, "Channel Measurement/output/ldpc")
 record_dir = os.path.join(project_dir, "Channel Measurement/record")
 data_dir = os.path.join(project_dir, "Channel Measurement/data")
 TXT_INPUT_PATH = r"D:\Pycharm\SEU-CAM-25-Newton-s-Apple\Channel Measurement\data\shakespace_poem_middle.txt"
-TIFF_INPUT_PATH = r"D:\Pycharm\SEU-CAM-25-Newton-s-Apple\Channel Measurement\data\Jossy origin.tiff"
+TIFF_INPUT_PATH = r"D:\Pycharm\SEU-CAM-25-Newton-s-Apple\Channel Measurement\data\fig1.tiff"
 
 # === 与 Tx 对齐的重要常量（新增/核对） ===
 NUM_INIT_PILOTS = 8          # 起始 OFDM 导频个数
@@ -426,8 +426,6 @@ def maybe_gt_cw(emit_bits_ldpc, start_block: int, end_block: int, Ncw: int, grou
     stream_slice = stream_slice[: nblocks * Ncw]
     return build_gt_codewords(stream_slice, nblocks, Ncw)
 
-
-
 def build_gt_codewords(emit_bits_ldpc: np.ndarray, nblocks: int, Ncw: int) -> np.ndarray:
     """
     把编码后的比特流切成 (nblocks, Ncw) 的“真值码字矩阵”。
@@ -461,7 +459,6 @@ def build_gt_codewords(emit_bits_ldpc: np.ndarray, nblocks: int, Ncw: int) -> np
 
     return stream.reshape(nblocks, Ncw)
 
-
 def analysis_txt(plot=False, plot_opt=None, ground_truth=True, tx_bits_path=TXT_INPUT_PATH):
     """
     重排为 5 步（Step0~Step4；Step5 为可选图表已内嵌在各步中）：
@@ -476,7 +473,7 @@ def analysis_txt(plot=False, plot_opt=None, ground_truth=True, tx_bits_path=TXT_
     # === Step0: 前处理 / 起始导频 ===
     # -------------------------------
     rx = np.load(
-        fr"D:\Pycharm\SEU-CAM-25-Newton-s-Apple\Channel Measurement\record\LDPC\received_txt_chirp_l2_10_24k_fs48k_N8192_cp1024_S8diff_R1-2_Z27_802.11n_A_random_middle_0.8_long_head_1.npy")
+        fr"D:\Pycharm\SEU-CAM-25-Newton-s-Apple\Channel Measurement\record\LDPC\received_txt_xjy_trival_1.npy")
     pilot = np.load(
         fr"D:\Pycharm\SEU-CAM-25-Newton-s-Apple\Channel Measurement\save\pilot\pilot_different_N8192_fixed.npy")
     chirp_template = generate_chirp(fs, duration=2, f_l=10, f_h=24000)
@@ -647,7 +644,7 @@ def analysis_txt(plot=False, plot_opt=None, ground_truth=True, tx_bits_path=TXT_
 
     def decode_llrs_with_logging(
             c, llrs_used, *, K, Ncw, ground_truth: bool,
-            gt_cw: np.ndarray | None = None, print_limit: int = 10,
+            gt_cw: np.ndarray | None = None, print_limit: int = 200,
             batch: int = 512, microbatch: int | None = 256,
             dgl_device: str = "cuda", dgl_llr_clip: float = 20.0,
             dgl_max_iter: int = 200, dgl_verbose: bool = False,
@@ -743,7 +740,9 @@ def analysis_txt(plot=False, plot_opt=None, ground_truth=True, tx_bits_path=TXT_
         return
     header_bits = info_bits_descr[:HEADER_BITS]
     payload_len = u64_from_bits_msb(header_bits)
+    # payload_len = 641968
     print(f"[RX] header payload_len(bits)={payload_len}")
+
 
     # ---- Header 合理性校验 + 一次重试 + 最终夹紧 ----
     # 理论容量上限（基于当前录音中可见的 data OFDM 总数）
@@ -1064,10 +1063,9 @@ def analysis_txt(plot=False, plot_opt=None, ground_truth=True, tx_bits_path=TXT_
             pass
 
     out_bytes = np.packbits(payload_bits)
-    with open(os.path.join(output_dir, "payload.bin"), 'wb') as f:
+    with open(os.path.join(output_dir, "payload.tiff"), 'wb') as f:
         f.write(out_bytes.tobytes())
-    print(f"[RX] payload saved: {os.path.join(output_dir, 'payload.bin')}  ({out_bytes.size} bytes)")
-
+    print(f"[RX] payload saved: {os.path.join(output_dir, 'payload.tiff')}  ({out_bytes.size} bytes)")
 
 if __name__ == "__main__":
     assert os.path.exists(project_dir), "specify your proj dir"
@@ -1087,4 +1085,4 @@ if __name__ == "__main__":
         'snr_time_data':                        True,
         'snr_over_sc':                          True,
     }
-    analysis_txt(plot=False , plot_opt=plot_opt ,ground_truth=True ,tx_bits_path=TXT_INPUT_PATH)
+    analysis_txt(plot=False , plot_opt=plot_opt ,ground_truth=True ,tx_bits_path=TIFF_INPUT_PATH)

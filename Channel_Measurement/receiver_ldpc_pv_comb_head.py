@@ -417,7 +417,7 @@ def build_gt_codewords(emit_bits_ldpc: np.ndarray, nblocks: int, Ncw: int) -> np
 
 def analysis_txt(plot=False, plot_opt=None, ground_truth=True, tx_bits_path=TXT_INPUT_PATH):
     rx = np.load(
-        fr"D:\Pycharm\SEU-CAM-25-Newton-s-Apple\Channel Measurement\record\LDPC\received_txt_chirp_l2_10_24k_fs48k_N8192_cp1024_S8diff_R1-2_Z27_802.11n_A_random_middle_0.8_long_head_2.npy")
+        fr"D:\Pycharm\SEU-CAM-25-Newton-s-Apple\Channel Measurement\record\LDPC\received_chirp_l2_10_24k_fs48k_N8192_cp1024_S8diff_R1-2_Z27_802.11n_A_random_middle_0.8_head_trival_4.npy")
     pilot = np.load(
         fr"D:\Pycharm\SEU-CAM-25-Newton-s-Apple\Channel Measurement\save\pilot\pilot_different_N8192_fixed.npy")
     chirp_template = generate_chirp(fs, duration=2, f_l=10, f_h=24000)
@@ -909,7 +909,7 @@ if __name__ == "__main__":
         'impulse_response':                     True,
         'raw_pilot_constellation':              True,
         'corrected_pilot_constellation':        True,
-        'data_constellation':                   True,
+        'data_constellation':                   False,
         'unwrap':                               True,
         'received_signal':                      True,
         'evm_vs_sub_carr':                      True,
