@@ -2,6 +2,7 @@ import os
 import warnings
 from typing import Dict, Tuple, Optional
 import numpy as np
+import torch.cuda
 
 
 def decode_bytes(byte_data, pth):
@@ -75,7 +76,9 @@ def ldpc_decode_blocks(*,
                        code,
                        groundtruth_bits: Optional[np.ndarray] = None,
                        head_bytes: int = 0,
-                       batch: int = 256):
+                       batch: int = 256,
+                       dectype: str | None = None,
+                       device: str = 'cuda'):
     """
     批量 LDPC 解码（优先 GPU 'sumprod2_dgl'；失败则回退单样本 CPU 'sumprod2'）。
     - 统计 BER 时，会先剔除解码信息比特流前 head_bytes*8 个头部位，然后与 groundtruth_bits 对齐比较。
@@ -99,6 +102,7 @@ def ldpc_decode_blocks(*,
     decoded_info_chunks = []
     pre_info_est_chunks = []   # 硬判前 K 位（信息位）用于 pre-BER
     it_list             = []
+    syn_list            = []
 
     # —— 按批次解码 —— #
     for s in range(0, nblocks, batch):
@@ -110,28 +114,58 @@ def ldpc_decode_blocks(*,
         pre_info_est_chunks.append(hard_pre_info.reshape(-1))   # 先缓存，稍后统一做剔头/对齐
 
         # 一次性批量解码（优先 GPU）
-        try:
-            if code.print_iter: print(f"[Batch] BLK {s}-{e}")
-            appB, itB = code.decode(ch_batch, dectype='sumprod2_dgl')   # (b, N), (b,)
-        except Exception:
-            # 回退：CPU 单样本
-            warnings.warn('fall back to CPU mode')
+        synB = None
+        if dectype is None:
+            if device == 'cuda':
+                assert torch.cuda.is_available(), "cuda is not available"
+                if code.print_iter: print(f"[Batch] BLK {s}-{e}")
+                appB, itB, synB = code.decode(ch_batch, dectype='sumprod2_dgl')  # (b, N), (b,)
+            elif device == 'cpu':
+                app_list, it_tmp = [], []
+                for i in range(ch_batch.shape[0]):
+                    for iter in range(code.dgl_max_iter):
+                        app_i, it_i = code.decode(ch_batch[i], dectype='sumprod2')
+                        xhat = (app_i<0).astype(np.uint8)
+                        syn = np.remainder(np.matmul(code.pcmat(), xhat), 2)
+                        if syn==0:
+                            break
+                    app_list.append(app_i)
+                    it_tmp.append(it_i)
+                appB = np.stack(app_list, axis=0)
+                itB = np.array(it_tmp)
+            else:
+                raise ValueError(f"unknown device {device}")
+        elif dectype == 'sumprod2_dgl':
+            appB, itB, synB = code.decode(ch_batch, dectype='sumprod2_dgl')
+        else:
             app_list, it_tmp = [], []
             for i in range(ch_batch.shape[0]):
-                app_i, it_i = code.decode(ch_batch[i], dectype='sumprod2')
+                for iter in range(code.dgl_max_iter):
+                    app_i, it_i = code.decode(ch_batch[i], dectype=dectype)
+                    xhat = (app_i < 0).astype(np.uint8)
+                    syn = np.remainder(np.matmul(code.pcmat(), xhat), 2)
+                    if syn == 0:
+                        break
                 app_list.append(app_i)
                 it_tmp.append(it_i)
             appB = np.stack(app_list, axis=0)
-            itB  = np.asarray(it_tmp)
+            itB = np.array(it_tmp)
 
         it_list.append(itB)
+        if synB is not None:
+            syn_list.append(synB)
 
         xhatB = (appB < 0).astype(np.uint8)     # (b, N)
         decoded_info_chunks.append(xhatB[:, :K].reshape(-1))  # 仅收集信息位
 
     # —— 拼接整段信息位流（包含头部）——
     decoded_info = np.concatenate(decoded_info_chunks, axis=0).astype(np.uint8)   # (nblocks*K,)
-    it = np.array(it_list)
+    if isinstance(it_list[0], np.ndarray):
+        it = np.concatenate(it_list)
+    else:
+        it = np.array(it_list)
+    if syn_list:
+        syn = np.concatenate(syn_list,axis=0)
 
     # —— BER 统计（仅当提供 groundtruth_bits 时进行）——
     pre_ber = post_ber = None
@@ -162,4 +196,4 @@ def ldpc_decode_blocks(*,
                 post_ber = float(np.mean(post_bits[:L] != gt_cmp))
 
 
-    return decoded_info, it, pre_ber, post_ber
+    return decoded_info, it, pre_ber, post_ber, syn

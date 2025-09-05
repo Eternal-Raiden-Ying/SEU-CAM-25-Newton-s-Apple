@@ -132,12 +132,12 @@ def phase_unwrap_auto(
     *,
     # 幅度筛选：二选一（给 abs_thresh 就用绝对阈值；否则用分位数）
     abs_thresh: float | None = None,
-    q_keep: float = 0.7,                 # 保留幅度最高的比例（quantile 模式）
+    q_keep: float = 0.8,                 # 保留幅度最高的比例（quantile 模式）
     # unwrap 初值的 discont 候选集合
     discont_candidates = (np.pi, 1.05*np.pi, 1.1*np.pi, 1.2*np.pi, 1.3*np.pi, 1.4*np.pi, 1.5*np.pi, 1.7*np.pi),
     # discont_candidates = (np.pi,  1.1*np.pi, 1.3*np.pi, 1.4*np.pi, 1.5*np.pi, 1.7*np.pi),
     # 滑窗搜索配置（占比范围、最小样本数）
-    win_frac_range = (0.2, 0.8),
+    win_frac_range = (0.05, 0.8),
     min_win_len: int = 50,
     # 是否对跨 0 频的窗口加一点偏好（通常更线性）
     center_bias: bool = True,

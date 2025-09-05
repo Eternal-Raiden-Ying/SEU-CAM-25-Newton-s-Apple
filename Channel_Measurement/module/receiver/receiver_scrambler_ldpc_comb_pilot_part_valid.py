@@ -116,7 +116,7 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
     rx_pilot_td = rx[ofdm_start : ofdm_start + num_pilot * (N + cp_len)]
     sym_pilot_td = get_symbols(rx_pilot_td, cp_len=cp_len, N=N)         # [num_pilot, N] 时域
     Hf_pilot = evaluate_H_f(sym_pilot_td, pilots_fd=pilot)              # [num_pilot, N]
-    res_arg = estimate_drift_and_origin(Hf_pilot, N=N, symbol_len=symbol_len, return_plot_args=plot_opt['unwrap'])
+    res_arg = estimate_drift_and_origin(Hf_pilot, N=N, symbol_len=symbol_len, return_plot_args=plot_opt['unwrap'], mode='total')
     delta0, phi0, origin_H_f = res_arg[0], res_arg[1], res_arg[2]
     freq_bias = fs / (delta0 + 1) - fs
 
@@ -159,6 +159,7 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
     rx_data_td = rx[ofdm_start + num_pilot * (N + cp_len):]
     symbols_all_td = get_symbols(rx_data_td, N=N, cp_len=cp_len)        # [M_guess, N]
     M_guess = symbols_all_td.shape[0]
+    # M_guess = 299
 
     if head_bit:
         if print_flag: print_padded("begin to analyze file head", print_len, print_pad)
@@ -208,9 +209,9 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
             w1_T, w2_T = seg_T["w1_per_sym"], seg_T["w2_per_sym"]
             H_used_T = (H_used_from_start_T * w1_T[:, None] + H_used_from_near_T * w2_T[:, None]) / (w1_T[:, None] + w2_T[:, None] + 1e-12)
         else:
-            H_used_T = correct_H_f(origin_H_f=origin_H_f, N=N, symbol_len=symbol_len,
+            H_used_T = correct_H_f(origin_H_f=Hf_pilot[-1], N=N, symbol_len=symbol_len,
                                    delta=delta0, fixed_phase_shift_factor=phi0,
-                                   index=data_pos_T+num_pilot).reshape(-1,N)
+                                   index=data_pos_T).reshape(-1,N)
 
 
         # 取数据符号，均衡 -> PLL（门限由 pll_snr_median 提供）
@@ -230,7 +231,7 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
             snr_scale=getattr(args, "pll_snr_scale", 4.0),
         )
         # 噪声/收缩
-        sigmas_T = robust_sigma(const_pll_T)
+        sigmas_T = robust_sigma(const_pll_T, per_sc=args.sig_trk_per_sc)
         Habs2_T = np.abs(H_used_T[:, DATA_BINS])**2
         const_mmse_T = mmse_shrinkage(const_pll_T, Habs2_T, sigmas_T)
 
@@ -350,7 +351,7 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
     )
 
     # 噪声/收缩
-    sigmas = robust_sigma(const_pll)
+    sigmas = robust_sigma(const_pll, per_sc=args.sig_trk_per_sc)
     Habs2 = np.abs(H_used[:, DATA_BINS])**2
     const_mmse = mmse_shrinkage(const_pll, Habs2, sigmas)
     if groundtruth:
@@ -389,7 +390,7 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
         batch=ldpc_batch
     )
 
-    if plot and plot_opt['BER_show']:
+    if groundtruth and plot and plot_opt['BER_show']:
         plot_pre_post_ber(pre_ber, post_ber)
 
     # 与发端一致：收端解码后再加扰，得到最终位流（含 64bit 头）
@@ -401,9 +402,11 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
         "pilot_metrics": pilot_metrics,
         "comb_metrics": comb_metrics,
         "ldpc_iter": it,
-        "pre_ber": np.mean(pre_ber),
-        "post_ber": np.mean(post_ber),
+        "pre_ber": np.mean(pre_ber) if args.groundtruth else None,
+        "post_ber": np.mean(post_ber) if args.groundtruth else None,
         "data_pos": data_pos,
         "pilot_pos": pilot_pos,
     }
+    if head_bit:
+        decoded_bits_scr = decoded_bits_scr[head_bit: ]
     return decoded_bits_scr, info

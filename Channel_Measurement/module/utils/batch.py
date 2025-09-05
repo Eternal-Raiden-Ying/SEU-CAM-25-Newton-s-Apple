@@ -128,7 +128,7 @@ def correct_H_f(origin_H_f: np.ndarray,
     return origin_H_f * linear_phase * cpe
 
 
-def estimate_drift_and_origin(Hf_seq: np.ndarray, *, N: int, symbol_len: int, return_plot_args: bool=False):
+def estimate_drift_and_origin(Hf_seq: np.ndarray, *, N: int, symbol_len: int, return_plot_args: bool=False, mode='each'):
     """
     输入 [ns, N] 的 H(f) 序列（前导 pilot），拟合 (delta, phi_step)，并把所有 H 对齐求均值得到 origin_Hf。
     """
@@ -167,14 +167,29 @@ def estimate_drift_and_origin(Hf_seq: np.ndarray, *, N: int, symbol_len: int, re
     if not return_plot_args:
         return np.mean(deltas).astype(float), np.mean(phis).astype(float), origin
     else:
-        plot_args = {
-            'ratio': ratios,
-            'slope': np.array(slopes),
-            'intercept': np.array(intercepts),
-            'x_auto': np.array(xs),
-            'auto_unwrapped_phase': np.array(phases),
-            'N': N
-        }
+        if mode == 'total':
+            ratio = np.mean(H[1:]/H[:-1], axis=0)
+            x_auto, auto_unwrapped_phase, _ = phase_unwrap_auto(data=ratio)
+            slope, intercept = fitting_line(x=x_auto, y=auto_unwrapped_phase, filter=True, residual_th=1.2)
+            plot_args = {
+                'ratio': ratio,
+                'slope': np.array(slope),
+                'intercept': np.array(intercept),
+                'x_auto': np.array(x_auto),
+                'auto_unwrapped_phase': np.array(auto_unwrapped_phase),
+                'N': N
+            }
+        elif mode == 'each':
+            plot_args = {
+                'ratio': ratios,
+                'slope': np.array(slopes),
+                'intercept': np.array(intercepts),
+                'x_auto': np.array(xs),
+                'auto_unwrapped_phase': np.array(phases),
+                'N': N
+            }
+        else:
+            raise ValueError(f"unknown mode {mode}")
         return np.mean(deltas).astype(float), np.mean(phis).astype(float), origin, plot_args
 
 # ========= 段构建 =========
@@ -636,14 +651,18 @@ def dd_cpe_pll_apply(constellations: np.ndarray,
     out = s2 * rot
     return out if s.ndim == 2 else out[0]
 
-def robust_sigma(constellations: np.ndarray) -> Dict[str, np.ndarray]:
+def robust_sigma(constellations: np.ndarray, *, per_sc: bool=False) -> Dict[str, np.ndarray]:
     s = np.asarray(constellations)
     if s.ndim == 1:
         s = s[None, :]
     hard = _qpsk_hard(s)
     err = s - hard
-    sr = _mad_sigma(err.real, axis=-1) + 1e-12
-    si = _mad_sigma(err.imag, axis=-1) + 1e-12
+    if per_sc:
+        sr = np.abs(err.real) * 1.2533
+        si = np.abs(err.imag) * 1.2533
+    else:
+        sr = _mad_sigma(err.real, axis=-1) + 1e-12
+        si = _mad_sigma(err.imag, axis=-1) + 1e-12
     return {"sigma_r": sr, "sigma_i": si}
 
 def mmse_shrinkage(constellations: np.ndarray,

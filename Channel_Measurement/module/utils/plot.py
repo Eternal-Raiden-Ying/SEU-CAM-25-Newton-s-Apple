@@ -190,11 +190,11 @@ def auto_constellation_map_param(num_sym):
     elif 8<num_sym<=12:
         row = 3
         col = 4
-        figsize = (10,9)
+        figsize = (9,8)
     else:
         row = 4
         col = 4
-        figsize = (10,12)
+        figsize = (9,10)
     return row, col, figsize
 
 

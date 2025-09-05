@@ -664,6 +664,7 @@ class code:
         B = ch.shape[0]
         micro = int(self.dgl_microbatch) if (self.dgl_microbatch or 0) > 0 else B
         app_out = np.zeros((B, self.Nv), dtype=np.float64)
+        syn_out = np.zeros((B,1), dtype=np.int32)
         last_iters = 0
 
         for s in range(0, B, micro):
@@ -731,14 +732,14 @@ class code:
                         break
 
             last_iters = iters
-            app_np = g.nodes['var'].data['Lpost'].detach().to(torch.float32).t().cpu().numpy().astype(
-                np.float64)  # (b,N)
+            app_np = g.nodes['var'].data['Lpost'].detach().to(torch.float32).t().cpu().numpy().astype(np.float64)  # (b,N)
             app_out[s:e] = app_np
+            syn_out[s:e] = syn_sum.cpu().numpy().reshape(-1,1).astype(np.int32)
 
         if was_1d:
-            return app_out[0], int(last_iters)
+            return app_out[0], int(last_iters), syn_out[0]
         else:
-            return app_out, int(last_iters)
+            return app_out, int(last_iters), syn_out
 
     def decode(self, ch, dectype='sumprod2', corr_factor=0.7):
         """
@@ -751,10 +752,10 @@ class code:
 
         # --- DGL GPU branch (early exit) ---
         if dectype == 'sumprod2_dgl':
-            app, iters = self._decode_sumprod2_dgl(ch)
+            app, iters, syn = self._decode_sumprod2_dgl(ch)
             if getattr(self, 'print_iter', False):
                 print(f"[LDPC][DGL] iters={iters}")
-            return app, iters
+            return app, iters, syn
 
         # ===== CPU/C backend path =====
         if ch.ndim != 1:

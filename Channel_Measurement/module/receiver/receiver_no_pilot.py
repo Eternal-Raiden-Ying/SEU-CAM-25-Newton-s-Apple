@@ -248,12 +248,12 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
         llr_blocks_T = pack_llr_blocks(ofdm_idx=ofdm_idx_T, sub_carr_freq=sub_carr_freq_T, llr=llr_scaled_T)
 
         # 解出头若干 codeword
-        decoded_head, it_head, _, _, _ = ldpc_decode_blocks(
+        decoded_head, it_head, _, _ = ldpc_decode_blocks(
             llr_blocks=llr_blocks_T,
             code=code,
             groundtruth_bits=None,
             head_bytes=0,
-            batch=ldpc_batch
+            batch=np.ceil(DATA_BINS.size/code.N).astype(int)
         )
         # 头 64 bit 定义在“解码后再扰码”的比特流上
         decoded_head_scr = scramble_bits(decoded_head, seed=scr_seed, mode=scr_mode, bit_width=scr_bitwidth)
@@ -383,7 +383,7 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
     sub_carr_freq = np.repeat(np.repeat(freq_axis_full[DATA_BINS], 2)[None, :], data_pos.size, axis=0)
     llr_blocks = pack_llr_blocks(ofdm_idx=ofdm_idx, sub_carr_freq=sub_carr_freq, llr=llr_scaled)
 
-    decoded_info, it, pre_ber, post_ber, syn = ldpc_decode_blocks(
+    decoded_info, it, pre_ber, post_ber = ldpc_decode_blocks(
         llr_blocks=llr_blocks,
         code=code,
         groundtruth_bits=gt_bits_scr if groundtruth else None,
@@ -393,8 +393,6 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
 
     if groundtruth and plot and plot_opt['BER_show']:
         plot_pre_post_ber(pre_ber, post_ber)
-        plt.scatter(np.arange(syn.size),syn, s=1)
-        plt.show()
 
     # 与发端一致：收端解码后再加扰，得到最终位流（含 64bit 头）
     decoded_bits_scr = scramble_bits(decoded_info, seed=scr_seed, mode=scr_mode, bit_width=scr_bitwidth)

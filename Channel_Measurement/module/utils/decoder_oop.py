@@ -158,8 +158,10 @@ class DD_CPE_PLL:
 
         if (snr_med_db >= th_t) and (e_abs < np.pi/2):
             self.theta = self._wrap_pi(self.theta + a_t * e)
-
-        return s * np.exp(-1j * self.theta)
+        if (snr_med_db >= th_t) and (e_abs < np.pi / 2):
+            return s * np.exp(-1j * e)
+        else:
+            return s * np.exp(-1j * self.theta)
 
 
 # ========== 主类：段构建 + 质量评估 + 逐符号追踪 ==========
