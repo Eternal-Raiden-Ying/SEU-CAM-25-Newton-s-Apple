@@ -285,111 +285,124 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
     all_idx = np.arange(M_total)
     pilot_pos = all_idx[(all_idx % (INTERVAL + 1)) == INTERVAL]
     data_pos = all_idx[(all_idx % (INTERVAL + 1)) != INTERVAL]
+    pilot_ref_comb_fd = (np.stack(
+        [generate_comb_pilot_symbol(N, comb_seed_base + i) for i in range(pilot_pos.size)], axis=0
+    ) if pilot_pos.size else np.zeros((0, N), complex))
     if plot and plot_opt['received_signal']:
         plot_received_signal(rx, ofdm_start, num_pilot, N, cp_len, M_total)
-
     # comb 参考与 H(f)
     if print_flag: print_padded("begin to analyze comb pilot", print_len, print_pad)
-    n_comb = pilot_pos.size
-    pilot_ref_comb_fd = (np.stack(
-        [generate_comb_pilot_symbol(N, comb_seed_base + i) for i in range(n_comb)], axis=0
-    ) if n_comb else np.zeros((0, N), complex))
-    symbols_comb_td = (symbols_all_td[pilot_pos] if n_comb else np.zeros((0, N), complex))
-    Hf_comb = evaluate_H_f(symbols_comb_td, pilot_ref_comb_fd) if n_comb else np.zeros((0, N), complex)
 
-    # 段构建
-    pilot_pred_param, seg = build_segments_from_pilots(
-        H_start=Hf_pilot[-1], Hf_comb=Hf_comb,
-        pilot_pos=pilot_pos, M=M_total, DATA_BINS=DATA_BINS, q_comb=None, mode="quality_distance",
-        symbol_len=symbol_len, N=N, delta_global=delta0, phi_global=phi0,
-        symbols_comb_td=symbols_comb_td, pilot_ref_comb_fd=pilot_ref_comb_fd
-    )
+    max_pseudo_iter = getattr(args, "pseudo_pilot_max_iter", 3)
+    alpha_pseudo_H = getattr(args, "pseudo_pilot_alpha", 0.5)  # H 融合平滑系数 [0,1]
+    verbose_pseudo = getattr(args, "pseudo_pilot_verbose", True)
 
-    comb_metrics = (analyze_pilots(
-        symbols_td=symbols_comb_td, pilot_ref=pilot_ref_comb_fd,
-        DATA_BINS=DATA_BINS, mode="comb", clockwise=clockwise,
-        Hf=correct_H_f(origin_H_f=pilot_pred_param['H_start'], delta=pilot_pred_param['delta'],
-                       fixed_phase_shift_factor=pilot_pred_param['phi'], index=pilot_pred_param['gap'],
-                       N=N, symbol_len=symbol_len)
-        ) if n_comb else {"q": np.array([]), "snr_db_med": np.array([])})
+    iter_pseudo = 0
+    circle_flag = True
+    while circle_flag and (iter_pseudo < max_pseudo_iter):
+        n_comb = pilot_pos.size
+        symbols_comb_td = (symbols_all_td[pilot_pos] if n_comb else np.zeros((0, N), complex))
+        Hf_comb = evaluate_H_f(symbols_comb_td, pilot_ref_comb_fd) if n_comb else np.zeros((0, N), complex)
+
+        # 段构建
+        pilot_pred_param, seg = build_segments_from_pilots(
+            H_start=Hf_pilot[-1], Hf_comb=Hf_comb,
+            pilot_pos=pilot_pos, M=M_total, DATA_BINS=DATA_BINS, q_comb=None, mode="quality_distance",
+            symbol_len=symbol_len, N=N, delta_global=delta0, phi_global=phi0,
+            symbols_comb_td=symbols_comb_td, pilot_ref_comb_fd=pilot_ref_comb_fd
+        )
+
+        comb_metrics = (analyze_pilots(
+            symbols_td=symbols_comb_td, pilot_ref=pilot_ref_comb_fd,
+            DATA_BINS=DATA_BINS, mode="comb", clockwise=clockwise,
+            Hf=correct_H_f(origin_H_f=pilot_pred_param['H_start'], delta=pilot_pred_param['delta'],
+                           fixed_phase_shift_factor=pilot_pred_param['phi'], index=pilot_pred_param['gap'],
+                           N=N, symbol_len=symbol_len)
+            ) if n_comb else {"q": np.array([]), "snr_db_med": np.array([])})
 
 
-    if plot and plot_opt['snr_time_comb']:
-        plot_snr_over_time(comb_metrics["snr_db_med"], title="Comb Pilot SNR over OFDM symbols")
-    if print_flag:
-        print('index    delta           phi')
-        print_dict_values(pilot_pred_param, ['delta', 'phi'],[f"{i}: pilot {index}" for i, index in enumerate(pilot_pos)])
-        print('index      snr         ber')
-        print_dict_values(comb_metrics, ['snr_db_med', 'ber'],[f"{i}: pilot {index}" for i, index in enumerate(pilot_pos)])
-        print_padded("comb pilot analysis done", print_len, print_pad)
+        if plot and plot_opt['snr_time_comb']:
+            plot_snr_over_time(comb_metrics["snr_db_med"], title="Comb Pilot SNR over OFDM symbols")
+        if print_flag:
+            print('index    delta           phi')
+            print_dict_values(pilot_pred_param, ['delta', 'phi'],[f"{i}: pilot {index}" for i, index in enumerate(pilot_pos)])
+            print('index      snr         ber')
+            print_dict_values(comb_metrics, ['snr_db_med', 'ber'],[f"{i}: pilot {index}" for i, index in enumerate(pilot_pos)])
+            print_padded("comb pilot analysis done", print_len, print_pad)
 
-    # 外推 H_used（两路 + 权重融合）
-    H_used_from_start = correct_H_f(
-        origin_H_f=seg["H_start_per_seg"], index=seg["dt_from_start_per_sym"], N=N, symbol_len=symbol_len,
-        delta=seg["delta_per_seg"], fixed_phase_shift_factor=seg["phi_per_seg"])
-    H_used_from_near = correct_H_f(
-        origin_H_f=seg["H_near_per_sym"], index=seg["dt_from_near_per_sym"], N=N, symbol_len=symbol_len,
-        delta=seg["delta_per_seg_per_sym"], fixed_phase_shift_factor=seg["phi_per_seg_per_sym"])
+        # 外推 H_used（两路 + 权重融合）
+        H_used_from_start = correct_H_f(
+            origin_H_f=seg["H_start_per_seg"], index=seg["dt_from_start_per_sym"], N=N, symbol_len=symbol_len,
+            delta=seg["delta_per_seg"], fixed_phase_shift_factor=seg["phi_per_seg"])
+        H_used_from_near = correct_H_f(
+            origin_H_f=seg["H_near_per_sym"], index=seg["dt_from_near_per_sym"], N=N, symbol_len=symbol_len,
+            delta=seg["delta_per_seg_per_sym"], fixed_phase_shift_factor=seg["phi_per_seg_per_sym"])
 
-    w1, w2 = seg["w1_per_sym"], seg["w2_per_sym"]
-    H_used = (H_used_from_start * w1[:, None] + H_used_from_near * w2[:, None]) / (w1[:, None] + w2[:, None] + 1e-12)
+        w1, w2 = seg["w1_per_sym"], seg["w2_per_sym"]
+        H_used = (H_used_from_start * w1[:, None] + H_used_from_near * w2[:, None]) / (w1[:, None] + w2[:, None] + 1e-12)
 
-    if print_flag: print_padded("begin to analyze data symbols", print_len, print_pad)
-    sym_data_td = symbols_all_td[data_pos].reshape(-1, N)
-    const_zf = get_constellation(sym_data_td, H_used, DATA_BINS=DATA_BINS)
-    pll_snr_med = pll_snr_median(const_zf)
-    const_pll = apply_cpe_pll_sequence(
-        const_zf, pll_snr_med,
-        alpha=getattr(args, "pll_alpha", 0.15),
-        snr_th_db=getattr(args, "pll_snr_th_db", 6.0),
-        alpha_min=getattr(args, "pll_alpha_min", 0.05),
-        alpha_max=getattr(args, "pll_alpha_max", 0.50),
-        snr_th_min_db=getattr(args, "pll_snr_min_db", 3.0),
-        snr_th_max_db=getattr(args, "pll_snr_max_db", 10.0),
-        beta=getattr(args, "pll_beta", 0.9),
-        snr_mid_db=getattr(args, "pll_snr_mid_db", 6.0),
-        snr_scale=getattr(args, "pll_snr_scale", 4.0),
-    )
+        if print_flag: print_padded("begin to analyze data symbols", print_len, print_pad)
+        sym_data_td = symbols_all_td[data_pos].reshape(-1, N)
+        const_zf = get_constellation(sym_data_td, H_used, DATA_BINS=DATA_BINS)
+        pll_snr_med = pll_snr_median(const_zf)
+        const_pll = apply_cpe_pll_sequence(
+            const_zf, pll_snr_med,
+            alpha=getattr(args, "pll_alpha", 0.15),
+            snr_th_db=getattr(args, "pll_snr_th_db", 6.0),
+            alpha_min=getattr(args, "pll_alpha_min", 0.05),
+            alpha_max=getattr(args, "pll_alpha_max", 0.50),
+            snr_th_min_db=getattr(args, "pll_snr_min_db", 3.0),
+            snr_th_max_db=getattr(args, "pll_snr_max_db", 10.0),
+            beta=getattr(args, "pll_beta", 0.9),
+            snr_mid_db=getattr(args, "pll_snr_mid_db", 6.0),
+            snr_scale=getattr(args, "pll_snr_scale", 4.0),
+        )
 
-    # 噪声/收缩
-    sigmas = robust_sigma(const_pll, per_sc=args.sig_trk_per_sc)
-    Habs2 = np.abs(H_used[:, DATA_BINS])**2
-    const_mmse = mmse_shrinkage(const_pll, Habs2, sigmas)
-    if groundtruth:
-        const_ref = QPSK_mapping(serial_to_parallel(gt_bits_ldpc, N=(Nd + 1) * 2))
-        data_metrics = analyze_pilots(pilot_ref=const_ref, symbols_fd=const_mmse,DATA_BINS=np.arange(Nd),
-                                      symbols_td=None, Hf=None,clockwise=clockwise, mode='data')
-        print('index      snr         ber')
-        print_dict_values(data_metrics, ['snr_db_med', 'ber'],
-                          [f"{i}: data {index}" for i, index in enumerate(data_pos)])
-        if plot and plot_opt['snr_time_data']:
-            plot_snr_over_time(data_metrics["snr_db_med"], title="Data symbol SNR over OFDM symbols")
-        if plot and plot_opt['data_constellation']:
-            plot_data_constellations(const=const_mmse, data_pos=data_pos, const_ref=const_ref)
-        if plot and plot_opt['snr_over_sc']:
-            plot_snr_over_subcarrier(np.mean(snr_from_constellation(const_mmse, const_ref), axis=0),
-                                     sc_idx=DATA_BINS, title="Average SNR over subcarriers (Data)")
-    if print_flag: print_padded("data symbols analysis done", print_len, print_pad)
+        # 噪声/收缩
+        sigmas = robust_sigma(const_pll, per_sc=args.sig_trk_per_sc)
+        Habs2 = np.abs(H_used[:, DATA_BINS])**2
+        const_mmse = mmse_shrinkage(const_pll, Habs2, sigmas)
+        if groundtruth:
+            const_ref = QPSK_mapping(serial_to_parallel(gt_bits_ldpc, N=(Nd + 1) * 2))
+            data_metrics = analyze_pilots(pilot_ref=const_ref, symbols_fd=const_mmse,DATA_BINS=np.arange(Nd),
+                                          symbols_td=None, Hf=None,clockwise=clockwise, mode='data')
+            print('index      snr         ber')
+            print_dict_values(data_metrics, ['snr_db_med', 'ber'], [f"{i}: data {index}" for i, index in enumerate(data_pos)])
+            if plot and plot_opt['snr_time_data']:
+                plot_snr_over_time(data_metrics["snr_db_med"], title="Data symbol SNR over OFDM symbols")
+            if plot and plot_opt['data_constellation']:
+                plot_data_constellations(const=const_mmse, data_pos=data_pos, const_ref=const_ref)
+            if plot and plot_opt['snr_over_sc']:
+                plot_snr_over_subcarrier(np.mean(snr_from_constellation(const_mmse, const_ref), axis=0),
+                                         sc_idx=DATA_BINS, title="Average SNR over subcarriers (Data)")
+        if print_flag: print_padded("data symbols analysis done", print_len, print_pad)
 
-    # LLR + 按 per-SC SNR(dB) 缩放
-    if print_flag: print_padded("begin to process and decode llr", print_len, print_pad)
-    llr_raw, stat = llr_from_constellation(const_mmse, llr_clip=ldpc_llr_clip)
-    scale_sc = llr_scale_by_snr(stat["snr_db_per_sc"], lo=2.0, hi=10.0, min_scale=0.4, max_scale=1.0)
-    llr_scaled = (llr_raw.reshape(-1, Nd, 2) * scale_sc[:, :, None]).reshape(-1, Nd*2)
+        # LLR + 按 per-SC SNR(dB) 缩放
+        if print_flag: print_padded("begin to process and decode llr", print_len, print_pad)
+        llr_raw, stat = llr_from_constellation(const_mmse, llr_clip=ldpc_llr_clip)
+        scale_sc = llr_scale_by_snr(stat["snr_db_per_sc"], lo=2.0, hi=10.0, min_scale=0.4, max_scale=1.0)
+        llr_scaled = (llr_raw.reshape(-1, Nd, 2) * scale_sc[:, :, None]).reshape(-1, Nd*2)
 
-    # 打包 LLR（形状需一致）
-    ofdm_idx = np.repeat(data_pos[:, None], Nd*2, axis=1)
-    freq_axis_full = np.linspace(0.0, fs, N, endpoint=False)
-    sub_carr_freq = np.repeat(np.repeat(freq_axis_full[DATA_BINS], 2)[None, :], data_pos.size, axis=0)
-    llr_blocks = pack_llr_blocks(ofdm_idx=ofdm_idx, sub_carr_freq=sub_carr_freq, llr=llr_scaled)
+        # 打包 LLR（形状需一致）
+        ofdm_idx = np.repeat(data_pos[:, None], Nd*2, axis=1)
+        freq_axis_full = np.linspace(0.0, fs, N, endpoint=False)
+        sub_carr_freq = np.repeat(np.repeat(freq_axis_full[DATA_BINS], 2)[None, :], data_pos.size, axis=0)
+        llr_blocks = pack_llr_blocks(ofdm_idx=ofdm_idx, sub_carr_freq=sub_carr_freq, llr=llr_scaled)
 
-    decoded_info, it, pre_ber, post_ber, syn = ldpc_decode_blocks(
-        llr_blocks=llr_blocks,
-        code=code,
-        groundtruth_bits=gt_bits_scr if groundtruth else None,
-        head_bytes=head_bit//8,  # 64bit 头
-        batch=ldpc_batch
-    )
+        decoded_info, it, pre_ber, post_ber, syn = ldpc_decode_blocks(
+            llr_blocks=llr_blocks,
+            code=code,
+            groundtruth_bits=gt_bits_scr if groundtruth else None,
+            head_bytes=head_bit//8,  # 64bit 头
+            batch=ldpc_batch
+        )
+        circle_flag = np.any(syn != 0)
+        if print_flag or verbose_pseudo:
+            print_padded(f"[pseudo] iter {iter_pseudo}: syn_nonzero={np.count_nonzero(syn)}", print_len, print_pad)
+        if circle_flag:
+            # update data_pos, pilot_pos, pilot_ref_comb_fd
+
+
 
     if groundtruth and plot and plot_opt['BER_show']:
         plot_pre_post_ber(pre_ber, post_ber)

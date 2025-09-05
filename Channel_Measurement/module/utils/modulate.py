@@ -169,11 +169,11 @@ def serial_to_parallel(data:np.ndarray, N: int, mode='QPSK'):
     else:
         raise ValueError("only support mode ['QPSK',] now")
     n = N//2 -1
-    num = np.ceil(data.size / N)
+    num = np.ceil(data.size / (n*q))
     data = data.flatten()
     if num * n * q > data.size:
         data = np.concatenate([data, random_bits(num*n*q - data.size)])
-    data = data. reshape(-1, n, q)
+    data = data.reshape(-1, n, q)
     return data
 
 

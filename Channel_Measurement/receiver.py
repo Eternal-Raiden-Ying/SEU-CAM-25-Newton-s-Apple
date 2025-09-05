@@ -18,7 +18,7 @@ if __name__ == "__main__":
         if not os.path.exists(dir_name):
             os.makedirs(dir_name)
 
-    rx_pth = r"D:\Documents\Coding\Python\SEUCAM\Channel_Measurement\record\temp\[tzc]received_tiff_chirp_l2_10_24k_fs48k_N8192_cp1024_S8diff_R1-2_Z27_802.11n_A_random256_middle_0.8_head_3.npy"
+    rx_pth = r"D:\Documents\Coding\Python\SEUCAM\Channel_Measurement\record\temp\[tzc]received_tiff_chirp_l2_10_24k_fs48k_N8192_cp1024_S8diff_R1-2_Z27_802.11n_A_random256_front_0.8_head_1.npy"
     pilot_pth = r'D:\Documents\Coding\Python\SEUCAM\Channel Measurement\record\LDPC\pilot_different_txt820_seed256_part0.8_comb.npy'
 
     plot_opt = {
@@ -41,7 +41,7 @@ if __name__ == "__main__":
         fs=48000, N=8192, cp_len=1024, num_pilot=8,
         chirp_len=2, chirp_l=10, chirp_h=24000,
         # chirp param
-        data_start=409, data_tail=409,
+        data_start=0, data_tail=819,
         # comb param
         INTERVAL=10, COMB_PILOT_SEED_BASE=128,
         # groundtruth
