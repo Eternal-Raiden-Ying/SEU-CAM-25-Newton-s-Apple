@@ -213,6 +213,7 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
     rx_data_td = rx[ofdm_start + num_pilot * (N + cp_len):]
     symbols_all_td = get_symbols(rx_data_td, N=N, cp_len=cp_len)        # [M_guess, N]
     M_guess = symbols_all_td.shape[0]
+    file_bits = 0
 
     if head_bit:
         if print_flag: print_padded("begin to analyze file head", print_len, print_pad)
@@ -313,7 +314,6 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
         # 头 64 bit 定义在“解码后再扰码”的比特流上
         decoded_head_scr = scramble_bits(decoded_head, seed=scr_seed, mode=scr_mode, bit_width=scr_bitwidth)
         head64 = decoded_head_scr[:64]
-        file_bits = 0
         for b in head64:
             file_bits = (file_bits << 1) | int(b)
         file_bytes = int(np.ceil(file_bits / 8.0))
@@ -583,18 +583,19 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
 
     # 与发端一致：收端解码后再加扰，得到最终位流（含 64bit 头）
     decoded_bits_scr = scramble_bits(info_blocks.flatten(), seed=scr_seed, mode=scr_mode, bit_width=scr_bitwidth)
-
-    pre_ber = post_ber = np.ones(1)
+    if head_bit:
+        head64 = decoded_bits_scr[:64]
+        for b in head64:
+            file_bits = (file_bits << 1) | int(b)
+        decoded_bits_scr = decoded_bits_scr[head_bit:gt_bits_raw.size]
+    if groundtruth:
+        post_ber = np.mean(decoded_bits_scr != gt_bits_raw[head_bit:])
     info = {
         "M": int(M_total),
         "pilot_metrics": pilot_metrics,
         "comb_metrics": comb_metrics,
-        "ldpc_iter": it,
-        "pre_ber": np.mean(pre_ber) if args.groundtruth else None,
-        "post_ber": np.mean(post_ber) if args.groundtruth else None,
-        "data_pos": data_pos,
-        "pilot_pos": pilot_pos,
+        "ldpc_iter": iter_pseudo,
+        "post_ber": post_ber if groundtruth else None,
     }
-    if head_bit:
-        decoded_bits_scr = decoded_bits_scr[head_bit: ]
+
     return decoded_bits_scr, info

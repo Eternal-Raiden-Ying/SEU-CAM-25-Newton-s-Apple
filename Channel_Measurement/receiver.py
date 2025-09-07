@@ -73,7 +73,6 @@ if __name__ == "__main__":
     decoded_info, info = receiver_dev(rx, pilot, args)
     print(f"ldpc iter: {info['ldpc_iter']}")
     if args.groundtruth:
-        print(f"pre_ber: {info['pre_ber']}")
         print(f"post_ber: {info['post_ber']}")
 
     bytes = np.packbits(decoded_info.flatten())
