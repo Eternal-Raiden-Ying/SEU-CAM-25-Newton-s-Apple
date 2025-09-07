@@ -343,9 +343,11 @@ def plot_data_constellations(const, const_ref, *, data_pos=None, pic_idx=None):
 #     q = 10.0 ** (snr_med_db / 20.0)  # 线性质量
 #     return q, snr_med_db
 #
-def plot_snr_over_time(snr_db_per_symbol: np.ndarray, title="SNR over OFDM symbols"):
+def plot_snr_over_time(snr_db_per_symbol: np.ndarray, title="SNR over OFDM symbols",*, pos: np.ndarray | None = None):
+    if pos is None:
+        pos = np.arange(snr_db_per_symbol.size)
     plt.figure(figsize=(10, 4))
-    plt.plot(np.arange(len(snr_db_per_symbol)), snr_db_per_symbol, marker='o', linewidth=1.5)
+    plt.plot(pos, snr_db_per_symbol, marker='o', linewidth=1.5)
     plt.xlabel("OFDM Symbol Index")
     plt.ylabel("SNR (dB)")
     plt.title(title)

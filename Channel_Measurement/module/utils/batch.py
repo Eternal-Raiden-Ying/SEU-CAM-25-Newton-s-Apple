@@ -79,28 +79,39 @@ def generate_comb_pilot_symbol(N: int, seed: int) -> np.ndarray:
 # ========= H(f) 估计 / 外推 =========
 def evaluate_H_f(symbols_td: np.ndarray,
                  pilots_fd: np.ndarray | None,
-                 seeds: Optional[Tuple[int, ...]] = None) -> np.ndarray:
+                 DATA_BINS: np.ndarray | None = None) -> np.ndarray:
     """
     统一版 H(f) 估计：支持 1D 或 2D。
       - symbols_td: [N] 或 [ns, N]（时域，已去 CP）
-      - pilots_fd : 同维度；为 None 时需提供 seeds（仅 comb）
+      - pilots_fd : 同维度；为 None 时需提供 seeds（deprecated）
     返回与 symbols_td 对齐。
     """
     X = np.asarray(symbols_td)
     if X.ndim == 1:
         Yf = np.fft.fft(X)
+        if DATA_BINS is None:
+            DATA_BINS = np.arange(X.size)
         if pilots_fd is None:
-            assert seeds is not None and len(seeds) >= 1
-            pilots_fd = _generate_comb_pilot_symbol(X.size, seeds[0])
-        return Yf / np.asarray(pilots_fd)
+            raise RuntimeError("Deprecated function invoked, pilots_fd must be explicitly given")
+        if pilots_fd.size > DATA_BINS.size:
+            pilots_fd = pilots_fd[DATA_BINS]
+        Y_f_used = Yf[DATA_BINS]
+        H_f = np.full(X.shape, np.nan, dtype=np.complex128)
+        H_f[DATA_BINS] = Y_f_used / np.asarray(pilots_fd)
+        return H_f
     elif X.ndim == 2:
         ns, N = X.shape
         Yf = np.fft.fft(X, axis=1)
+        if DATA_BINS is None:
+            DATA_BINS = np.arange(N)
         if pilots_fd is None:
-            assert seeds is not None and len(seeds) >= 1
-            base = seeds[0]
-            pilots_fd = np.stack([_generate_comb_pilot_symbol(N, base + i) for i in range(ns)], axis=0)
-        return Yf / np.asarray(pilots_fd)
+            raise RuntimeError("Deprecated function invoked, pilots_fd must be explicitly given")
+        if pilots_fd.shape[1] > DATA_BINS.size:
+            pilots_fd = pilots_fd[:,DATA_BINS]
+        Y_f_used = Yf[:,DATA_BINS]
+        H_fs = np.full(X.shape, np.nan, dtype=np.complex128)
+        H_fs[:,DATA_BINS] = Y_f_used / np.asarray(pilots_fd)
+        return H_fs
     else:
         raise ValueError("symbols_td 维度必须为 1 或 2")
 
@@ -194,7 +205,7 @@ def estimate_drift_and_origin(Hf_seq: np.ndarray, *, N: int, symbol_len: int, re
 
 # ========= 段构建 =========
 
-def _fit_drift_between(H_start, H_end, gap, N, * , symbol_len=None, return_phi=False, plot=False):
+def _fit_drift_between(H_start, H_end, gap, N, * , symbol_len=None, return_phi=False, plot=False, DATA_BINS=None):
     """
     用两个时间点（相隔 gap 个 OFDM）的信道估计做比值，拟合得到“每 OFDM”的
     频偏斜率 delta 以及常相位步进 phi。
@@ -206,14 +217,19 @@ def _fit_drift_between(H_start, H_end, gap, N, * , symbol_len=None, return_phi=F
     """
     if symbol_len is None:
         raise ValueError("symbol_len must be provided")
-    phase_shift = H_end / H_start
-    x_auto, auto_unwrapped_phase, _ = phase_unwrap_auto(data=phase_shift )
+    if DATA_BINS is None:
+        DATA_BINS = np.arange(N)
+    if H_start.ndim == 1:
+        phase_shift = H_end[DATA_BINS] * np.conj(H_start[DATA_BINS])
+    else:
+        raise ValueError(f"only support dimension <= 1, received {H_start.ndim}")
+    x_auto, auto_unwrapped_phase, _ = phase_unwrap_auto(data=phase_shift.flatten(), DATA_BINS=DATA_BINS, N=N)
     slope, intercept = fitting_line(x=x_auto, y=auto_unwrapped_phase, filter=True, residual_th=1.5)
     if plot:
         from .plot import plot_unwrap_phase_fitting
         plot_unwrap_phase_fitting(phase_shift, slope, intercept,x_auto, auto_unwrapped_phase, N)
 
-    delta = slope / (symbol_len * (-2 * np.pi) / N) / gap
+    delta = slope / (gap * symbol_len * (-2 * np.pi) / N)
     phi_step = intercept / gap  # 每“一个”符号的常相位步进
 
     if return_phi:
@@ -245,7 +261,7 @@ def _pilot_quality(symbol_td: np.ndarray,
 
     # 2) 用 H_pred 等化该 pilot 的星座
     Xd = get_constellation(symbols_td=symbol_td, H_used=H_pred, DATA_BINS=DATA_BINS)
-    Rd = pilot_ref_fd[DATA_BINS]
+    Rd = pilot_ref_fd[DATA_BINS] if pilot_ref_fd.size == N else pilot_ref_fd
 
     # 3) SNR / 质量
     snr_sc = snr_from_constellation(Xd, Rd)                         # per-SC 线性 SNR
@@ -262,6 +278,8 @@ def build_segments_from_pilots(H_start: np.ndarray,
                                q_comb: Optional[np.ndarray] = None,
                                *,
                                mode: str = "quality_distance",
+                               data_pos: np.ndarray | None = None,
+                               start_idx: int | None = None,
                                symbol_len: int,
                                N: int,
                                # 全局漂移（无 comb 或尾段回退时使用）
@@ -355,19 +373,20 @@ def build_segments_from_pilots(H_start: np.ndarray,
 
     all_idx  = np.arange(M, dtype=int)
     pilot_pos = np.asarray(pilot_pos, dtype=int)
-    data_pos = np.setdiff1d(all_idx, pilot_pos)
+    data_pos = np.setdiff1d(all_idx, pilot_pos) if data_pos is None else data_pos
     n_data   = data_pos.size
 
     # ------- 1) 组段（与之前一致） -------
     segs = []
-    prev_idx = -1
+    prev_idx = -1 if start_idx is None else start_idx
     H_ref = H_start.copy()
 
     H_s_list, d_list, p_list, g_list = [], [], [], []
     if Hf_comb.size > 0 and pilot_pos.size > 0:
         for j, pidx in enumerate(pilot_pos):
             gap = int(pidx - prev_idx)
-            d_j, p_j = _fit_drift_between(H_ref, Hf_comb[j], gap, N=N, symbol_len=symbol_len, return_phi=True, plot=False)
+            d_j, p_j = _fit_drift_between(H_ref, Hf_comb[j], gap, N=N, symbol_len=symbol_len,
+                                          return_phi=True, DATA_BINS=DATA_BINS, plot=False)
             H_s_list.append(H_ref.copy())
             d_list.append(d_j)
             p_list.append(p_j)
@@ -382,7 +401,7 @@ def build_segments_from_pilots(H_start: np.ndarray,
                 last_d, last_p = float(delta_global), float(phi_global)
             segs.append((prev_idx, M, H_ref.copy(), H_ref.copy(), float(last_d), float(last_p), len(pilot_pos)-1, int(M - prev_idx)))
     else:
-        segs.append((-1, M, H_start.copy(), H_start.copy(), float(delta_global), float(phi_global), -1, int(M - (-1))))
+        segs.append((prev_idx, M, H_start.copy(), H_start.copy(), float(delta_global), float(phi_global), -1, int(M - prev_idx)))
 
     # ------- 2) 准备每段的 q（若未传 q_comb 则内部计算） -------
     q_list = None
@@ -496,8 +515,8 @@ def build_segments_from_pilots(H_start: np.ndarray,
 
 
 # ========= Pilot/Comb 统一分析（向量化）=========
-def analyze_pilots(symbols_td: np.ndarray,
-                   Hf: np.ndarray,
+def analyze_pilots(symbols_td: np.ndarray | None,
+                   Hf: np.ndarray | None,
                    pilot_ref: np.ndarray,
                    DATA_BINS: np.ndarray,
                    *,
@@ -553,17 +572,20 @@ def analyze_pilots(symbols_td: np.ndarray,
             `symbols_fd` 的语义与 Rd 一致（即与 pilot_ref 同步对齐）。
     """
     pilot_ref = np.asarray(pilot_ref)
-    Rd = pilot_ref[:, DATA_BINS]
-    ns, N_loc = pilot_ref.shape
-
+    if pilot_ref.ndim == 1:
+        pilot_ref = pilot_ref[None,:]
+    Rd = pilot_ref[:, DATA_BINS] if pilot_ref.shape[1]>DATA_BINS.size else pilot_ref
     if symbols_fd is None:
+        assert symbols_td is not None and Hf is not None
         symbols_td = np.asarray(symbols_td)
         Hf = np.asarray(Hf)
-        assert Hf.shape == (ns, N_loc) and symbols_td.shape == (ns, N_loc)
         Xd = get_constellation(symbols_td=symbols_td, H_used=Hf, DATA_BINS=DATA_BINS)
     else:
-        Xd = symbols_fd[:,DATA_BINS]
+        if symbols_fd.ndim == 1:
+            symbols_fd = symbols_fd[None,:]
+        Xd = symbols_fd[:,DATA_BINS] if symbols_fd.shape[1]>DATA_BINS.size else symbols_fd
 
+    assert Xd.shape == Rd.shape
     snr_sc = snr_from_constellation(Xd, Rd)
     snr_db_med = 10.0 * np.log10(np.median(np.clip(snr_sc, 1e-12, None), axis=-1))
     quality = 1.0 / (1.0 + np.exp(-(snr_db_med - 5.0) / 2.0))  # 仅用于回退时
@@ -761,11 +783,34 @@ def llr_scale_by_snr(snr_db_per_sc: np.ndarray,
     x = np.clip((snr_db_per_sc - lo) / max(1e-6, hi - lo), 0.0, 1.0)
     return min_scale + x * (max_scale - min_scale)
 
-def pack_llr_blocks(*, ofdm_idx: np.ndarray, sub_carr_freq: np.ndarray, llr: np.ndarray) -> Dict[str, np.ndarray]:
-    assert ofdm_idx.shape == sub_carr_freq.shape == llr.shape
-    return {"ofdm_idx": ofdm_idx.astype(np.int32),
-            "sub_carr_freq": sub_carr_freq.astype(np.float32),
-            "llr": llr.astype(np.float32)}
+def pack_llr_blocks(ofdm_idx: np.ndarray,
+                    sub_carr_freq: np.ndarray,
+                    llr: np.ndarray,
+                    Ncw: int):
+    """
+    输入:
+        ofdm_idx        : [ns, Nd*2]  每个比特所属的 OFDM 符号序号
+        sub_carr_freq   : [ns, Nd*2]  每个比特所属子载波频率(仅用于稳定排序/可视化)
+        llr             : [ns, Nd*2]
+    输出(dict):
+        'llr'       : [num_blocks, code_N]  —— 原调用仅用它
+        'ofdm_idx'  : [num_blocks, code_N]  —— 与 'llr' 一一对应
+        'sc_freq'   : [num_blocks, code_N]  —— 与 'llr' 一一对应
+    """
+    n_codeword = llr.size // Ncw
+    llr = llr.flatten()[:n_codeword*Ncw].reshape(-1, Ncw)
+    nc, N = llr.shape
+    assert ofdm_idx.size >= llr.size
+    assert sub_carr_freq.size >= llr.size
+    flat_ofdm = ofdm_idx.reshape(-1).astype(np.int32)[:nc*N]
+    flat_freq = sub_carr_freq.reshape(-1).astype(np.float32)[:nc*N]
+
+    return {
+        'llr': llr,
+        'ofdm_idx': flat_ofdm.reshape(nc, N),
+        'sc_freq': flat_freq.reshape(nc, N)
+    }
+
 
 # ========= M 推断 & PLL SNR 中位 =========
 def equalize_first_data_symbol(symbols_all_td: np.ndarray,

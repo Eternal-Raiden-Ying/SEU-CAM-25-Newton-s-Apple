@@ -1,7 +1,14 @@
 import warnings
 
 import numpy as np
-__all__ = ['phase_unwrap', 'fitting_line', 'normalize', 'phase_unwrap_auto']
+__all__ = ['phase_unwrap', 'fitting_line', 'normalize', 'phase_unwrap_auto', 'unique_sorted']
+
+def unique_sorted(x):
+    if len(x) == 0:
+        return x
+    # 保留第一个元素，以及相邻不相等的元素
+    mask = np.concatenate(([True], np.diff(x) != 0))
+    return x[mask]
 
 
 def phase_unwrap(data:np.ndarray, estimate_start=0, estimate_percent=0.1,*,
@@ -126,6 +133,12 @@ def _robust_line_fit(x, y):
     s, b = np.linalg.lstsq(Aw, yw, rcond=None)[0]
     return s, b
 
+def _centralize(data:np.ndarray, DATA_BINS:np.ndarray, N:int):
+    assert data.ndim == 1
+    neg_freq_mask = np.where(DATA_BINS >= N//2)[0]
+    pos_freq_mask = np.where(DATA_BINS < N//2)[0]
+    return np.concatenate([data[neg_freq_mask],data[pos_freq_mask]])
+
 
 def phase_unwrap_auto(
     data: np.ndarray,
@@ -143,8 +156,11 @@ def phase_unwrap_auto(
     center_bias: bool = True,
     # 展开后是否再做一次全段稳健微调
     refine_full_fit: bool = True,
+    # 惩罚因子，用于防止斜率拟合结果过大，弃用中
     penal_factor: float = 1e3,
-    penal_bound:  float = 1e-2
+    penal_bound:  float = 1e-2,
+    DATA_BINS: np.ndarray | None = None,
+    N: int | None = None
 ):
     """
     自适应一维相位展开（智能选线性片段 + 多discont择优 + 稳健拟合）
@@ -156,22 +172,24 @@ def phase_unwrap_auto(
         meta: dict（过程信息，便于调试）
     """
     data = np.asarray(data)
-    N = int(data.size)
+    if DATA_BINS is not None:
+        assert isinstance(N, int), "if using DATA_BINS, N must be explicitly given"
+    else:
+        N = N = int(data.size)
+        DATA_BINS = np.arange(N)
+
     if N == 0:
+        warnings.warn("auto unwrap got no data")
         return np.array([], dtype=int), np.array([]), {'mode': 'empty'}
 
-    data = data.flatten()[:N]  # 防御性
     # x: -N//2..N//2-1
-    x_full = np.linspace(-N // 2, N // 2, N, endpoint=False, dtype=np.int32)
+    x_full = _centralize(data=np.arange(N), DATA_BINS=DATA_BINS, N=N)
     # y: 先取角，再“把负频段挪前”
     y_full = _angle(data)
-    y_full = np.concatenate([y_full[N // 2:], y_full[:N // 2]])
-
-    # 同步重排幅度，用于筛选
-    amp_full = np.abs(data) if np.iscomplexobj(data) else np.ones_like(y_full)
-    amp_full = np.concatenate([amp_full[N // 2:], amp_full[:N // 2]])
+    y_full = _centralize(data=y_full, DATA_BINS=DATA_BINS, N=N)
 
     # ---------- 自适应幅度掩码 ----------
+    amp_full = np.abs(y_full) if np.iscomplexobj(y_full) else np.ones_like(y_full)
     if abs_thresh is not None:
         mask = amp_full >= abs_thresh
     else:
@@ -180,6 +198,7 @@ def phase_unwrap_auto(
 
     # 防止掩码过严
     if mask.sum() < max(min_win_len, 10):
+        warnings.warn("unwrap did not get enough data from amp filter")
         mask = np.ones_like(mask, dtype=bool)
 
     x = x_full[mask]

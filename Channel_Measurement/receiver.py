@@ -45,7 +45,7 @@ if __name__ == "__main__":
         # comb param
         INTERVAL=10, COMB_PILOT_SEED_BASE=128,
         # groundtruth
-        groundtruth=True, head_bit=64,
+        groundtruth=True, head_bit=0,
         tx_file_path=r"D:\Documents\Coding\Python\SEUCAM\Channel_Measurement\data\answer.tiff",
         # scrambler param
         scrambler_seed=256, scrambler_mode='random', scrambler_bitwidth=None, clockwise=False,
@@ -64,7 +64,7 @@ if __name__ == "__main__":
         # fake pilot
         data_seg_len=8,
         # plot settings
-        plot=True, plot_opt=plot_opt,
+        plot=False, plot_opt=plot_opt,
         # print settings
         print_flag=True, print_len=64, print_pad='-'
     )

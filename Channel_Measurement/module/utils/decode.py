@@ -119,7 +119,7 @@ def ldpc_decode_blocks(*,
             if device == 'cuda':
                 assert torch.cuda.is_available(), "cuda is not available"
                 if code.print_iter: print(f"[Batch] BLK {s}-{e}")
-                appB, itB, synB = code.decode(ch_batch, dectype='sumprod2_dgl')  # (b, N), (b,)
+                appB, itB, synB = code.decode(ch_batch, dectype='sumprod2_dgl')  # (b, N), (b,), (b,)
             elif device == 'cpu':
                 app_list, it_tmp = [], []
                 for i in range(ch_batch.shape[0]):
@@ -170,8 +170,6 @@ def ldpc_decode_blocks(*,
     # —— BER 统计（仅当提供 groundtruth_bits 时进行）——
     pre_ber = post_ber = None
     if groundtruth_bits is not None and groundtruth_bits.size > 0:
-        head_bits = int(head_bytes) * 8
-
         # 解码前的“信息位硬判”流
         pre_bits = np.concatenate(pre_info_est_chunks, axis=0).astype(np.uint8)  # (nblocks*K,)
         post_bits = decoded_info
