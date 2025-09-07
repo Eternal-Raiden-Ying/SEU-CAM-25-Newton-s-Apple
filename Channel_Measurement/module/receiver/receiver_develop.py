@@ -54,6 +54,37 @@ def contiguous_bounds(a):
 
     return np.array(result, dtype=a.dtype)
 
+def _build_ofdm_maps(ofdm_idx_blocks: np.ndarray) -> tuple[dict, dict, int]:
+    """
+    输入: ofdm_idx_blocks [B, Ncw]
+    输出:
+      - ofdm_to_blocks: {ofdm -> np.array(block_ids)}
+      - ofdm_to_flat_idx: {ofdm -> np.array(flat positions 按原flatten顺序，长度应为 Nd*2)}
+      - num_blocks: B
+    """
+    B, Ncw = ofdm_idx_blocks.shape
+    flat_ofdm = ofdm_idx_blocks.reshape(-1).astype(np.int64)
+    ofdm_to_blocks = {}
+    for b in range(B):
+        for o in np.unique(ofdm_idx_blocks[b]):
+            ofdm_to_blocks.setdefault(int(o), set()).add(b)
+    ofdm_to_blocks = {k: np.array(sorted(list(v)), dtype=np.int32) for k, v in ofdm_to_blocks.items()}
+    ofdm_to_flat_idx = {}
+    # 直接使用 np.where(flat_ofdm==o) 的索引顺序，即为原行主序(OFDM优先)的顺序
+    uniq = np.unique(flat_ofdm)
+    for o in uniq:
+        idx = np.nonzero(flat_ofdm == o)[0]
+        ofdm_to_flat_idx[int(o)] = idx
+    return ofdm_to_blocks, ofdm_to_flat_idx, B
+
+def _blocks_ready_mask(llr_global_mask_flat: np.ndarray, Ncw: int, num_blocks: int) -> np.ndarray:
+    """每块 Ncw 个比特，块就绪=其 Ncw 位均已有有效 LLR。"""
+    ready = np.empty(num_blocks, dtype=bool)
+    for b in range(num_blocks):
+        s = b * Ncw
+        e = s + Ncw
+        ready[b] = np.all(llr_global_mask_flat[s:e])
+    return ready
 
 def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
     """
@@ -182,9 +213,7 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
     rx_data_td = rx[ofdm_start + num_pilot * (N + cp_len):]
     symbols_all_td = get_symbols(rx_data_td, N=N, cp_len=cp_len)        # [M_guess, N]
     M_guess = symbols_all_td.shape[0]
-    M_guess = 215
 
-    # TODO: develop时改动了部分函数的接口，仿照data symbol的处理修改提取head bit时的处理
     if head_bit:
         if print_flag: print_padded("begin to analyze file head", print_len, print_pad)
 
@@ -203,9 +232,12 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
         # comb 参考与 H(f)
         n_comb_T = pilot_pos_T.size
         if n_comb_T:
-            pilot_ref_comb_fd_T = np.stack([generate_comb_pilot_symbol(N, comb_seed_base + i) for i in range(n_comb_T)],axis=0)
+            pilot_ref_comb_fd_T = np.stack(
+                [generate_comb_pilot_symbol(N, comb_seed_base + i) for i in range(n_comb_T)],
+                axis=0
+            )[:, DATA_BINS]
             symbols_comb_T_td = symbols_all_td[pilot_pos_T]
-            Hf_comb_T = evaluate_H_f(symbols_comb_T_td, pilot_ref_comb_fd_T)
+            Hf_comb_T = evaluate_H_f(symbols_comb_T_td, pilot_ref_comb_fd_T, DATA_BINS)
 
             # 段构建（质量加权的“前导最后一块 + 最近 comb”）
             pilot_pred_param_T, seg_T = build_segments_from_pilots(
@@ -269,14 +301,13 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
         ofdm_idx_T = np.repeat(data_pos_T[:, None], Nd*2, axis=1)
         freq_axis_full = np.linspace(0.0, fs, N, endpoint=False)
         sub_carr_freq_T = np.repeat(np.repeat(freq_axis_full[DATA_BINS], 2)[None, :], data_pos_T.size, axis=0)
-        llr_blocks_T = pack_llr_blocks(ofdm_idx=ofdm_idx_T, sub_carr_freq=sub_carr_freq_T, llr=llr_scaled_T, code_N=code.N)
+        llr_blocks_T = pack_llr_blocks(ofdm_idx=ofdm_idx_T, sub_carr_freq=sub_carr_freq_T, llr=llr_scaled_T, Ncw=code.N)
 
         # 解出头若干 codeword
         decoded_head, it_head, _, _, _ = ldpc_decode_blocks(
             llr_blocks=llr_blocks_T,
             code=code,
             groundtruth_bits=None,
-            head_bytes=0,
             batch=ldpc_batch
         )
         # 头 64 bit 定义在“解码后再扰码”的比特流上
@@ -314,20 +345,36 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
     data_pos_global = all_idx[(all_idx % (INTERVAL + 1)) != INTERVAL] if INTERVAL is not None else all_idx
 
 
-    max_pseudo_iter = getattr(args, "pseudo_pilot_max_iter", 3)
+    max_pseudo_iter = getattr(args, "pseudo_pilot_max_iter", 5)
     alpha_pseudo_H = getattr(args, "pseudo_pilot_alpha", 0.5)  # H 融合平滑系数 [0,1]
     verbose_pseudo = getattr(args, "pseudo_pilot_verbose", True)
 
     iter_pseudo = 0
     circle_flag = True
-    pilot_pos = pilot_pos_global
-    data_pos = data_pos_global
-    # initialize pilot_comb_fd if using comb-type pilot
-    pilot_ref_comb_fd = (np.stack(
-        [generate_comb_pilot_symbol(N, comb_seed_base + i) for i in range(pilot_pos_global.size)], axis=0
-    ) if pilot_pos_global.size else np.zeros((0, N), complex))
+    pilot_pos = pilot_pos_global.copy()
+    data_pos = data_pos_global.copy()
+    # ===== 全局 ofdm/频率索引 与 LLR 缓冲（行=OFDM in data_pos_global, 列=Nd*2） =====
+    T_global = data_pos_global.size
+    freq_axis_full = np.linspace(0.0, fs, N, endpoint=False)
+    ofdm_idx_global = np.repeat(data_pos_global[:, None], Nd * 2, axis=1)
+    sc_freq_global = np.repeat(np.repeat(freq_axis_full[DATA_BINS], 2)[None, :], T_global, axis=0)
+    llr_global = np.full((T_global, Nd * 2), np.nan, dtype=np.float32)
+    # 用“占位 LLR”pack一次，得到稳定的块划分与 ofdm→块 的映射
+    _packed0 = pack_llr_blocks(ofdm_idx_global, sc_freq_global, np.nan_to_num(llr_global, nan=0.0), Ncw=code.N)
+    ofdm2blk, ofdm2flat, num_blocks = _build_ofdm_maps(_packed0['ofdm_idx'])
+    block_done = np.zeros(num_blocks, dtype=bool)  # 已通过 LDPC 的块
+    info_blocks = np.full((num_blocks, code.K), -1, dtype=np.int8)  # 每块信息比特缓存（-1=未知）
+    pos2ref = {}
 
-    decoded_info = []
+    # comb 参考(按 DATA_BINS 截断为 Nd 列，以适配 evaluate_H_f(..., DATA_BINS))
+    pilot_ref_comb_fd_global_full = np.stack(
+        [generate_comb_pilot_symbol(N, comb_seed_base + i) for i in range(pilot_pos_global.size)], axis=0
+    ) if pilot_pos_global.size else np.zeros((0, N), complex)
+    pilot_ref_comb_fd_global = pilot_ref_comb_fd_global_full[:, DATA_BINS] \
+        if pilot_pos_global.size else np.zeros((0, Nd), complex)
+    pilot_ref_comb_fd = pilot_ref_comb_fd_global.copy()
+
+
     while circle_flag and (iter_pseudo < max_pseudo_iter):
         n_comb = pilot_pos.size
         symbols_comb_td = (symbols_all_td[pilot_pos] if n_comb else np.zeros((0, N), complex))
@@ -413,64 +460,131 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
         scale_sc = llr_scale_by_snr(stat["snr_db_per_sc"], lo=2.0, hi=10.0, min_scale=0.4, max_scale=1.0)
         llr_scaled = (llr_raw.reshape(-1, Nd, 2) * scale_sc[:, :, None]).reshape(-1, Nd*2)
 
-        # TODO: 现有的逻辑仅适配原来无伪导频的处理模式，当某一llr_block跨过两个OFDM符号，
-        #  且只有其中一个OFDM symbol是data symbol(则此llr_block实际在上一循环已经通过LDPC校验)，
-        #  此时不再需要将对应的llr_block传给解码器，因此llr_scaled需要根据已经解码的情况作截断处理，
-        #  另外ofdm_idx, sc_freq需要对应修改，匹配每一bit的llr，
-        #  建议利用全局的ofdm_idx_global，sub_carr_freq_global(都需要自己新建)进行切片得到此处的参数，
-        #  全局的decoded_info设计对应的visited_flag或者预先用nan填充以便于对llr_scaled进行切片
-        ofdm_idx = np.repeat(data_pos[:, None], Nd*2, axis=1)
-        freq_axis_full = np.linspace(0.0, fs, N, endpoint=False)
-        sub_carr_freq = np.tile(np.repeat(freq_axis_full[DATA_BINS], 2), data_pos.size)
-        llr_blocks = pack_llr_blocks(ofdm_idx=ofdm_idx, sub_carr_freq=sub_carr_freq, llr=llr_scaled, Ncw=code.N)
+        # === 3) 写入“全局 LLR 缓冲”，只覆盖本轮 data_pos 对应行 ===
+        rows_global = np.nonzero(np.isin(data_pos_global, data_pos))[0]
+        llr_global[rows_global, :] = llr_scaled
 
-        # TODO: 将BER计算移出ldpc_decode_blocks的逻辑，将BER计算移到循环外，即当所有llr_block解码完毕再计算最后的BER并可视化
-        decoded_info_part, it, pre_ber, post_ber, syn = ldpc_decode_blocks(
-            llr_blocks=llr_blocks,
-            code=code,
-            groundtruth_bits=None,
-            batch=ldpc_batch
+        # === 4) 基于固定块边界重新打包，并仅解码“就绪且未解”的块 ===
+        packed_now = pack_llr_blocks(
+            ofdm_idx=ofdm_idx_global,
+            sub_carr_freq=sc_freq_global,
+            llr=np.nan_to_num(llr_global, nan=0.0),
+            Ncw=code.N
         )
-        if print_flag and verbose_pseudo:
-            print_padded(f"[pseudo] iter {iter_pseudo}: syn_nonzero={np.count_nonzero(syn)}", print_len, print_pad)
+        llr_blocks_all = packed_now['llr']  # [B, Ncw]
+        ofdm_idx_blocks = packed_now['ofdm_idx']  # [B, Ncw]
+        sc_freq_blocks = packed_now['sc_freq']  # [B, Ncw]
 
-        circle_flag = np.any(syn != 0)
-        ok_llr = np.repeat(syn == 0, code.N)
-        pb_ofdm_idx = unique_sorted(llr_blocks['ofdm_idx'].flatten()[ok_llr==0])  # ofdm symbol (problem) idx
-        decoded_info_part = decoded_info_part.reshape(-1, code.K)
-        # TODO: 对于通过LDPC校验的部分，逐llr_block写入解码后的信息，未通过LDPC校验的部分，位置保留，便于后续写入
-        # update data_pos, pilot_pos, pilot_ref_comb_fd
-        if pb_ofdm_idx.size == data_pos.size:
-            # fail to decode new things
-            # TODO: 当采取新的伪导频没有解出新的可靠信息时，将未通过LDPC校验的部分也写入decoded_info,结束循环
-            circle_flag = False
+        # 计算每块“就绪”掩码：块内 Ncw 个比特均已填充（非 NaN）
+        mask_flat = np.isfinite(llr_global.reshape(-1))
+        num_blocks = llr_blocks_all.shape[0]
+        block_ready = np.empty(num_blocks, dtype=bool)
+        for b in range(num_blocks):
+            s = b * code.N
+            e = s + code.N
+            block_ready[b] = np.all(mask_flat[s:e])
 
+        to_decode = np.nonzero((~block_done) & block_ready)[0]
+        if to_decode.size:
+            llr_blocks = {
+                'llr': llr_blocks_all[to_decode],
+                'ofdm_idx': ofdm_idx_blocks[to_decode],
+                'sc_freq': sc_freq_blocks[to_decode],
+            }
+            decoded_info_part, it, _, _, syn = ldpc_decode_blocks(
+                llr_blocks=llr_blocks,
+                code=code,
+                groundtruth_bits=None,
+                batch=ldpc_batch
+            )
+            decoded_info_part = decoded_info_part.reshape(-1, code.K)
+            syn = syn.flatten()
+            ok = (syn == 0)
+            block_done[to_decode[ok]] = True
+            info_blocks[to_decode] = decoded_info_part
         else:
-            # Use the part that failed the LDPC check as the data symbol for the next iteration
-            data_pos = np.array(pb_ofdm_idx)
-            # Use the part that has already passed the LDPC check and the original comb pilot as the pilot symbol
-            # for the next cycle. Only take the non-continuous parts to reduce unnecessary calculations.
-            pilot_pos = contiguous_bounds(np.setdiff1d(all_idx, data_pos))
+            syn = np.array([], dtype=int)
 
-            # TODO: 生成新的pilot_ref_comb_fd,
-            #       判断所需的pilot_pos中是否包含pilot_pos_global,如果包含，需要按照pilot index合并两部分
-            #       另外，根据ldpc解码生成的pilot_ref_fd仅包含DATA_BINS部分，对应pilot_pos_global部分的pilot_ref需要用DATA_BINS截断，以构成二维数组
+        if print_flag:
+            nz = int(np.count_nonzero(syn != 0)) if syn.size else 0
+            print_padded(f"[iter {iter_pseudo}] new_blocks={to_decode.size}, syn_nonzero={nz}, "
+                         f"done={int(np.count_nonzero(block_done))}/{num_blocks}",print_len, print_pad)
 
-            # 进入下一轮
-            iter_pseudo += 1
-            continue  # while circle_flag 的下一轮：会据新的 pilot_pos/pilot_ref_comb_fd 重建 segment
+        # === 5) 选择“可晋升”的 data OFDM：覆盖它的全部块均已通过 ===
+        promotable = []
+        for o in data_pos.tolist():
+            blks = ofdm2blk.get(int(o), None)
+            idxs = ofdm2flat.get(int(o), np.array([], dtype=int))
+            if blks is None or blks.size == 0:
+                continue
+            # 需要该 OFDM 的 Nd*2 位都在打包范围内（尾部不足时跳过）
+            if (idxs.size >= Nd * 2) and np.all(block_done[blks]):
+                promotable.append(int(o))
+
+        # === 6) 仅在“最后 update”处更新 data_pos / pilot_pos / pilot_ref_comb_fd ===
+        # 下一轮 data = 仍有未完成块的 ofdm
+        still_data = []
+        for o in data_pos.tolist():
+            blks = ofdm2blk.get(int(o), None)
+            if blks is None or blks.size == 0:
+                continue
+            if not np.all(block_done[blks]):
+                still_data.append(int(o))
+        data_pos = np.array(still_data, dtype=int)
+
+        # 若既无新块可解码又无可晋升 OFDM，则终止
+        if (len(promotable) == 0) or (data_pos.size == 0):
+            circle_flag = False
+            break
+
+        # 下一轮 pilot：其余 ofdm（用不连续块边界以减少计算）
+        pilot_pos = contiguous_bounds(np.setdiff1d(all_idx, data_pos))
+
+        # 1) 原 comb 导频参考（Nd 列）
+        if pilot_pos_global.size:
+            for i, p in enumerate(pilot_pos_global):
+                if p in set(pilot_pos.tolist()):
+                    pos2ref[int(p)] = pilot_ref_comb_fd_global[i]  # Nd 维
+
+        # 2) 伪导频参考：用“通过 LDPC 的块”还原全局码字 → 抽取该 OFDM 的 Nd*2 位 → QPSK 映射成 Nd 维星座
+        if len(promotable):
+            # 未确定(-1)的信息位用 0 填充，然后整体扰码+整体LDPC编码，保证与打包顺序一致
+            info_all = info_blocks.copy()
+            info_all[info_all < 0] = 0
+            info_flat = info_all.reshape(-1).astype(np.int8)
+            # bits_scr_hat = scramble_bits(info_flat, seed=scr_seed, mode=scr_mode, bit_width=scr_bitwidth)
+            bits_ldpc_hat, _ = ldpc_encode_bits(info_flat, c=code)  # 长度 = num_blocks * code.N
+
+            for o in promotable:
+                idxs = ofdm2flat[int(o)]
+                if idxs.size < Nd * 2:
+                    continue
+                pair_bits = bits_ldpc_hat[idxs[:Nd * 2]].reshape(-1, 2)  # [Nd, 2]
+                const_ref = QPSK_mapping(pair_bits)  # [Nd]
+                pos2ref[int(o)] = const_ref
+
+        # 生成与 pilot_pos 对齐的 pilot_ref_comb_fd（Nd 列，dtype=complex）
+        if pilot_pos.size:
+            pilot_ref_comb_fd = np.stack([pos2ref[int(p)] for p in pilot_pos], axis=0).astype(np.complex128)
+        else:
+            pilot_ref_comb_fd = np.zeros((0, Nd), dtype=np.complex128)
+
+        # 进入下一轮
+        iter_pseudo += 1
+        continue
 
 
     # TODO: groundtruth模式中，BER处理逻辑新增在这里
 
-    if groundtruth and plot and plot_opt['BER_show']:
-        plot_pre_post_ber(pre_ber, post_ber)
-        plt.scatter(np.arange(syn.size),syn, s=1)
-        plt.show()
+    # if groundtruth and plot and plot_opt['BER_show']:
+    #     plot_pre_post_ber(pre_ber, post_ber)
+    #     plt.scatter(np.arange(syn.size),syn, s=1)
+    #     plt.show()
 
     # 与发端一致：收端解码后再加扰，得到最终位流（含 64bit 头）
-    decoded_bits_scr = scramble_bits(decoded_info, seed=scr_seed, mode=scr_mode, bit_width=scr_bitwidth)
+    decoded_bits_scr = scramble_bits(info_blocks.flatten(), seed=scr_seed, mode=scr_mode, bit_width=scr_bitwidth)
 
+    pre_ber = post_ber = np.ones(1)
     info = {
         "M": int(M_total),
         "pilot_metrics": pilot_metrics,

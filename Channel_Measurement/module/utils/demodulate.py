@@ -67,8 +67,8 @@ def get_constellation(symbols_td: np.ndarray, H_used: np.ndarray, *, DATA_BINS: 
     返回：若输入为 [N] -> [Nd]；若 [ns,N] -> [ns,Nd]
     """
     Yf = np.fft.fft(symbols_td, axis=-1)
-    Xf = Yf / H_used
-    return Xf[..., DATA_BINS]
+    Xf = Yf[..., DATA_BINS] / H_used[..., DATA_BINS]
+    return Xf
 
 
 # ========= QPSK 基础 =========
