@@ -30,29 +30,10 @@ from ..utils.batch import (
     llr_scale_by_snr, pack_llr_blocks, apply_cpe_pll_sequence,
     # M 估计
     estimate_M_from_filesize,
+    # next turn pilot
+    choose_next_pilots
 )
 
-
-def contiguous_bounds(a):
-    if len(a) == 0:
-        return np.array([], dtype=a.dtype)
-
-    # 找到不连续的位置
-    breaks = np.where(np.diff(a) > 1)[0] + 1
-
-    # 每一段的起点和终点
-    starts = np.r_[a[0], a[breaks]]
-    ends = np.r_[a[breaks - 1], a[-1]]
-
-    # 拼接结果，避免重复
-    result = []
-    for s, e in zip(starts, ends):
-        if s == e:
-            result.append(s)
-        else:
-            result.extend([s, e])
-
-    return np.array(result, dtype=a.dtype)
 
 def _build_ofdm_maps(ofdm_idx_blocks: np.ndarray) -> tuple[dict, dict, int]:
     """
@@ -170,15 +151,25 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
     rx_pilot_td = rx[ofdm_start : ofdm_start + num_pilot * (N + cp_len)]
     sym_pilot_td = get_symbols(rx_pilot_td, cp_len=cp_len, N=N)         # [num_pilot, N] 时域
     Hf_pilot = evaluate_H_f(sym_pilot_td, pilots_fd=pilot)              # [num_pilot, N]
-    res_arg = estimate_drift_and_origin(Hf_pilot, N=N, symbol_len=symbol_len, return_plot_args=plot_opt['unwrap'], mode='total')
-    delta0, phi0, origin_H_f = res_arg[0], res_arg[1], res_arg[2]
+    res_arg = estimate_drift_and_origin(Hf_pilot, N=N, symbol_len=symbol_len, return_plot_args=plot_opt['unwrap'], mode='each')
+    delta0 = np.mean(res_arg[0]) if res_arg[0].size > 1 else res_arg[0]
+    phi0 = np.mean(res_arg[1]) if res_arg[1].size > 1 else res_arg[1]
+    origin_H_f = res_arg[2]
     freq_bias = fs / (delta0 + 1) - fs
 
-    pilot_metrics = analyze_pilots(
-        symbols_td=sym_pilot_td, pilot_ref=pilot, DATA_BINS=DATA_BINS, mode="front", clockwise=clockwise,
-        Hf=correct_H_f(origin_H_f=origin_H_f, N=N, index=np.arange(num_pilot),
-                       symbol_len=symbol_len, delta=delta0, fixed_phase_shift_factor=phi0)
-    )
+    if isinstance(res_arg[0], np.ndarray) and res_arg[0].size > 1:
+        pilot_metrics = analyze_pilots(
+            symbols_td=sym_pilot_td, pilot_ref=pilot, DATA_BINS=DATA_BINS, mode="front", clockwise=clockwise,
+            Hf=correct_H_f(origin_H_f=origin_H_f, N=N, index=np.arange(num_pilot), symbol_len=symbol_len,
+                           delta=np.concatenate([np.zeros(1), np.array([np.sum(res_arg[0][1:i+1])/i for i in range(1,num_pilot)])], axis=0),
+                           fixed_phase_shift_factor=np.concatenate([np.zeros(1), np.array([np.sum(res_arg[1][1:i+1])/i for i in range(1,num_pilot)])], axis=0))
+        )
+    else:
+        pilot_metrics = analyze_pilots(
+            symbols_td=sym_pilot_td, pilot_ref=pilot, DATA_BINS=DATA_BINS, mode="front", clockwise=clockwise,
+            Hf=correct_H_f(origin_H_f=origin_H_f, N=N, index=np.arange(num_pilot), symbol_len=symbol_len,
+                           delta=delta0, fixed_phase_shift_factor=phi0)
+        )
 
     if print_flag:
         print(f"delta:{delta0}")
@@ -203,7 +194,7 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
         plot_original_constellations(symbols_td=sym_pilot_td, H_used=Hf_pilot[0], pilot=pilot, DATA_BINS=DATA_BINS)
     if plot and plot_opt['corrected_pilot_constellation']:
         plot_corrected_constellations(symbols_td=sym_pilot_td, origin_H_f=origin_H_f, pilot=pilot,
-                                      symbol_len=symbol_len, delta=delta0, fixed_phase_shift_factor=phi0,
+                                      symbol_len=symbol_len, delta=res_arg[0], fixed_phase_shift_factor=res_arg[1],
                                       DATA_BINS=DATA_BINS)
     if plot and plot_opt.get('snr_time_pilot', False):
         plot_snr_over_time(pilot_metrics["snr_db_med"], title="Front Pilot SNR over OFDM symbols")
@@ -224,11 +215,12 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
         T = estimate_M_from_filesize(filesize_bytes=head_bit // 8, K=code.K, Ncw=code.N, Nd=Nd, modulation_bits=2,
                                      interval=INTERVAL)
         T = min(T, M_guess)                     # 防越界
-        T = max(T, INTERVAL+1)
+        if INTERVAL is not None:
+            T = max(T, INTERVAL + 1)
 
         idx_T = np.arange(T)
-        pilot_pos_T = idx_T[(idx_T % (INTERVAL + 1)) == INTERVAL]   # comb 位置
-        data_pos_T = idx_T[(idx_T % (INTERVAL + 1)) != INTERVAL]   # 数据符号位置
+        pilot_pos_T = idx_T[(idx_T % (INTERVAL + 1)) == INTERVAL] if INTERVAL is not None else np.array([])  # comb 位置
+        data_pos_T = idx_T[(idx_T % (INTERVAL + 1)) != INTERVAL] if INTERVAL is not None else idx_T          # 数据符号位置
 
         # comb 参考与 H(f)
         n_comb_T = pilot_pos_T.size
@@ -236,7 +228,7 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
             pilot_ref_comb_fd_T = np.stack(
                 [generate_comb_pilot_symbol(N, comb_seed_base + i) for i in range(n_comb_T)],
                 axis=0
-            )[:, DATA_BINS]
+            ).reshape(-1, N)[:, DATA_BINS]
             symbols_comb_T_td = symbols_all_td[pilot_pos_T]
             Hf_comb_T = evaluate_H_f(symbols_comb_T_td, pilot_ref_comb_fd_T, DATA_BINS)
 
@@ -246,14 +238,6 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
                 DATA_BINS=DATA_BINS, q_comb=None, mode="quality_distance",
                 symbol_len=symbol_len, N=N, delta_global=delta0, phi_global=phi0,
                 symbols_comb_td=symbols_comb_T_td, pilot_ref_comb_fd=pilot_ref_comb_fd_T
-            )
-
-            comb_metrics_T = analyze_pilots(
-                symbols_td=symbols_comb_T_td, pilot_ref=pilot_ref_comb_fd_T, DATA_BINS=DATA_BINS,
-                Hf=correct_H_f(origin_H_f=pilot_pred_param_T['H_start'], delta=pilot_pred_param_T['delta'],
-                               fixed_phase_shift_factor=pilot_pred_param_T['phi'], index=pilot_pred_param_T['gap'],
-                               N=N, symbol_len=symbol_len),
-                mode="comb", clockwise=clockwise,
             )
 
             # 外推 H_used（两路 + 权重融合）
@@ -325,6 +309,7 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
 
 
     M_total = int(min(M_total, M_guess)) if head_bit else M_guess
+    if print_flag: print_padded(f"decoded file head, OFDM symbols {M_total}", print_len, print_pad)
     if plot and plot_opt['received_signal']:
         plot_received_signal(rx, ofdm_start, num_pilot, N, cp_len, M_total)
 
@@ -345,9 +330,8 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
     data_pos_global = all_idx[(all_idx % (INTERVAL + 1)) != INTERVAL] if INTERVAL is not None else all_idx
 
 
-    max_pseudo_iter = getattr(args, "pseudo_pilot_max_iter", 5)
+    max_pseudo_iter = getattr(args, "pseudo_pilot_max_iter", 20)
     alpha_pseudo_H = getattr(args, "pseudo_pilot_alpha", 0.5)  # H 融合平滑系数 [0,1]
-    verbose_pseudo = getattr(args, "pseudo_pilot_verbose", True)
 
     iter_pseudo = 0
     circle_flag = True
@@ -399,12 +383,11 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
 
         if plot and plot_opt['snr_time_comb']:
             plot_snr_over_time(comb_metrics["snr_db_med"], title="Comb Pilot SNR over OFDM symbols", pos=pilot_pos)
-        if print_flag:
+        if print_flag and n_comb:
             print('index    delta           phi')
             print_dict_values(pilot_pred_param, ['delta', 'phi'],[f"{i}: pilot {index}" for i, index in enumerate(pilot_pos)])
             print('index      snr         ber')
             print_dict_values(comb_metrics, ['snr_db_med', 'ber'],[f"{i}: pilot {index}" for i, index in enumerate(pilot_pos)])
-
 
         # 外推 H_used（两路 + 权重融合）
         H_used_from_start = correct_H_f(
@@ -434,11 +417,12 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
             snr_mid_db=getattr(args, "pll_snr_mid_db", 6.0),
             snr_scale=getattr(args, "pll_snr_scale", 4.0),
         )
-
+        # const_pll = const_zf
         # 噪声/收缩
         sigmas = robust_sigma(const_pll, per_sc=args.sig_trk_per_sc)
         Habs2 = np.abs(H_used[:, DATA_BINS])**2
         const_mmse = mmse_shrinkage(const_pll, Habs2, sigmas)
+        # const_mmse = const_pll
         if groundtruth:
             const_ref = const_data_global_ref[np.where(np.isin(data_pos_global, data_pos))[0]]
             data_metrics = analyze_pilots(pilot_ref=const_ref, symbols_fd=const_mmse,DATA_BINS=np.arange(Nd),
@@ -505,10 +489,11 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
         else:
             syn = np.array([], dtype=int)
 
-        if print_flag:
+        if print_flag or args.iter_verbose:
             nz = int(np.count_nonzero(syn != 0)) if syn.size else 0
-            print_padded(f"[iter {iter_pseudo}] new_blocks={to_decode.size}, syn_nonzero={nz}, "
-                         f"done={int(np.count_nonzero(block_done))}/{num_blocks}",print_len, print_pad)
+            print_padded(f"[iter {iter_pseudo}] process_blocks={to_decode.size}, new_blocks={to_decode.size-nz},"
+                         f" syn_nonzero={nz}, done={int(np.count_nonzero(block_done))}/{num_blocks}",
+                         print_len, print_pad)
 
         # === 5) 选择“可晋升”的 data OFDM：覆盖它的全部块均已通过 ===
         promotable = []
@@ -534,11 +519,13 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
 
         # 若既无新块可解码又无可晋升 OFDM，则终止
         if (len(promotable) == 0) or (data_pos.size == 0):
-            circle_flag = False
+            print(f"Unsolved data OFDM symbols: {data_pos.size}")
             break
 
-        # 下一轮 pilot：其余 ofdm（用不连续块边界以减少计算）
-        pilot_pos = contiguous_bounds(np.setdiff1d(all_idx, data_pos))
+        # 下一轮 pilot
+        pilot_pos = choose_next_pilots(data_pos=data_pos,
+                                       available_pilots=np.setdiff1d(all_idx, data_pos),
+                                       edge_expand_k=getattr(args, "edge_expand", 2))
 
         # 1) 原 comb 导频参考（Nd 列）
         if pilot_pos_global.size:
@@ -582,12 +569,18 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
     #     plt.show()
 
     # 与发端一致：收端解码后再加扰，得到最终位流（含 64bit 头）
-    decoded_bits_scr = scramble_bits(info_blocks.flatten(), seed=scr_seed, mode=scr_mode, bit_width=scr_bitwidth)
+    decoded_bits_raw = scramble_bits(info_blocks.flatten(), seed=scr_seed, mode=scr_mode, bit_width=scr_bitwidth).ravel()
+    if groundtruth and plot and plot_opt['BER_show']:
+        post_ber_per_blk = np.mean(
+            decoded_bits_raw[:gt_bits_raw.size//code.K*code.K].reshape(-1, code.K) != gt_bits_raw[:gt_bits_raw.size//code.K*code.K].reshape(-1, code.K),
+            axis=1
+        )
+        plot_pre_post_ber(post_ber=post_ber_per_blk)
     if head_bit:
-        head64 = decoded_bits_scr[:64]
+        head64 = decoded_bits_raw[:64]
         for b in head64:
             file_bits = (file_bits << 1) | int(b)
-        decoded_bits_scr = decoded_bits_scr[head_bit:gt_bits_raw.size]
+        decoded_bits_scr = decoded_bits_raw[head_bit:gt_bits_raw.size]
     if groundtruth:
         post_ber = np.mean(decoded_bits_scr != gt_bits_raw[head_bit:])
     info = {

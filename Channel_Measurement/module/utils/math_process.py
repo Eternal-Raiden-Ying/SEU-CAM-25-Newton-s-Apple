@@ -135,6 +135,13 @@ def _robust_line_fit(x, y):
 
 def _centralize(data:np.ndarray, DATA_BINS:np.ndarray, N:int):
     assert data.ndim == 1
+    if data.size > DATA_BINS.size:
+        assert data.size == N
+        data=data[DATA_BINS]
+    elif data.size == DATA_BINS.size:
+        pass
+    else:
+        raise ValueError(f"unexcepted shape, data.shape {data.shape}, DATA_BINS.shape {DATA_BINS.shape}")
     neg_freq_mask = np.where(DATA_BINS >= N//2)[0]
     pos_freq_mask = np.where(DATA_BINS < N//2)[0]
     return np.concatenate([data[neg_freq_mask],data[pos_freq_mask]])
@@ -145,22 +152,24 @@ def phase_unwrap_auto(
     *,
     # 幅度筛选：二选一（给 abs_thresh 就用绝对阈值；否则用分位数）
     abs_thresh: float | None = None,
-    q_keep: float = 0.8,                 # 保留幅度最高的比例（quantile 模式）
+    q_keep: float = 0.7,                 # 保留幅度最高的比例（quantile 模式）
     # unwrap 初值的 discont 候选集合
-    discont_candidates = (np.pi, 1.05*np.pi, 1.1*np.pi, 1.2*np.pi, 1.3*np.pi, 1.4*np.pi, 1.5*np.pi, 1.7*np.pi),
+    discont_candidates = (np.pi, 1.1*np.pi, 1.2*np.pi, 1.3*np.pi, 1.4*np.pi, 1.5*np.pi, 1.7*np.pi),
     # discont_candidates = (np.pi,  1.1*np.pi, 1.3*np.pi, 1.4*np.pi, 1.5*np.pi, 1.7*np.pi),
     # 滑窗搜索配置（占比范围、最小样本数）
-    win_frac_range = (0.05, 0.8),
+    win_frac_range = (0.02, 0.8),
     min_win_len: int = 50,
     # 是否对跨 0 频的窗口加一点偏好（通常更线性）
-    center_bias: bool = True,
+    center_bias: bool = False,
     # 展开后是否再做一次全段稳健微调
     refine_full_fit: bool = True,
     # 惩罚因子，用于防止斜率拟合结果过大，弃用中
     penal_factor: float = 1e3,
     penal_bound:  float = 1e-2,
     DATA_BINS: np.ndarray | None = None,
-    N: int | None = None
+    N: int | None = None,
+    score_th: float = 0.5,
+    score_gate_ctrl_leakage: bool = True
 ):
     """
     自适应一维相位展开（智能选线性片段 + 多discont择优 + 稳健拟合）
@@ -175,7 +184,7 @@ def phase_unwrap_auto(
     if DATA_BINS is not None:
         assert isinstance(N, int), "if using DATA_BINS, N must be explicitly given"
     else:
-        N = N = int(data.size)
+        N = int(data.size)
         DATA_BINS = np.arange(N)
 
     if N == 0:
@@ -183,7 +192,8 @@ def phase_unwrap_auto(
         return np.array([], dtype=int), np.array([]), {'mode': 'empty'}
 
     # x: -N//2..N//2-1
-    x_full = _centralize(data=np.arange(N), DATA_BINS=DATA_BINS, N=N)
+
+    x_full = _centralize(data=np.concatenate([np.arange(N//2),np.arange(N//2)-N//2]), DATA_BINS=DATA_BINS, N=N)
     # y: 先取角，再“把负频段挪前”
     y_full = _angle(data)
     y_full = _centralize(data=y_full, DATA_BINS=DATA_BINS, N=N)
@@ -223,6 +233,7 @@ def phase_unwrap_auto(
         # “跨 0 频”或包含 0 的窗口优先（更接近整体线性）
         return (xs.min() <= 0) and (xs.max() >= 0)
 
+    stop_flag = False
     for d in discont_candidates:
         y_unw0 = np.unwrap(y, discont=d)
 
@@ -256,6 +267,13 @@ def phase_unwrap_auto(
                         'win_idx': x[start],
                         'win_len': L
                     }
+                    if score_gate_ctrl_leakage:
+                        if score < score_th:
+                            stop_flag = True
+                            break
+
+        if stop_flag: break
+
 
     # 若依然不稳定，回退
     if not np.isfinite(best['score']):

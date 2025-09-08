@@ -214,14 +214,16 @@ def plot_impulse_response(h_t, fs,*,freq_half=True):
                ax=axes[1], mode='Amplitude', y_label='H(f)/dB', x_label='Freq/Hz')
     plt.show()
 
-def plot_unwrap_phase_fitting(phase_shift, slope, intercept, x_auto, auto_unwrapped_phase, N):
+def plot_unwrap_phase_fitting(phase_shift, slope, intercept,
+                              x_auto, auto_unwrapped_phase, N, *,
+                              title="Unwrap phase fitting line"):
     num_sym = phase_shift.shape[0] if phase_shift.ndim > 1 else 1
     n_rows, n_cols, figsize = auto_constellation_map_param(num_sym)
     if n_cols * n_cols == 1:
         x = np.linspace(-N // 2, N // 2, N, endpoint=False)
         phase_shift = np.concatenate([phase_shift[N // 2:], phase_shift[:N // 2]])
-        plt.title(f"Unwrap phase fitting line")
-        plt.plot(x, np.angle(phase_shift), color='orange', label='original', alpha=0.5)
+        plt.title(title)
+        plt.plot(x_auto, np.angle(phase_shift), color='orange', label='original', alpha=0.5)
         plt.plot(x, slope * x + intercept, linestyle='solid', label='fitting result', color='red')
         plt.plot(x, slope * x + intercept + np.pi, linestyle='dotted', color='red', alpha=0.5)
         plt.plot(x, slope * x + intercept - np.pi, linestyle='dotted', color='red', alpha=0.5)
@@ -237,7 +239,7 @@ def plot_unwrap_phase_fitting(phase_shift, slope, intercept, x_auto, auto_unwrap
             ax = axes[i // n_cols, i % n_cols]
             x = np.linspace(-N // 2, N // 2, N, endpoint=False)
             phase = np.concatenate([phase_shift[i, N//2:],phase_shift[i, :N//2]])
-            ax.set_title(f"Unwrap phase fitting line {i+1}")
+            ax.set_title(f"{title} {i+1}")
             ax.plot(x, np.angle(phase), color='orange', label='original', alpha=0.5)
             ax.plot(x, slope[i] * x + intercept[i], linestyle='solid', label='fitting result', color='red')
             ax.plot(x, slope[i] * x + intercept[i] + np.pi, linestyle='dotted', color='red', alpha=0.5)
@@ -285,10 +287,23 @@ def plot_corrected_constellations(symbols_td, origin_H_f, pilot, symbol_len, del
     pic_num = pic_idx.size
     n_rows, n_cols, figsize = auto_constellation_map_param(pic_num)
     fig, axes = plt.subplots(n_rows, n_cols, figsize=figsize)
+    if isinstance(delta, np.ndarray) and delta.size > 1:
+        delta = np.concatenate(
+            [np.zeros(1), np.array([np.sum(delta[1:i + 1]) / i for i in range(1, num_sym)])],
+            axis=0
+        )
+        fixed_phase_shift_factor = np.concatenate(
+            [np.zeros(1), np.array([np.sum(fixed_phase_shift_factor[1:i + 1]) / i for i in range(1, num_sym)])],
+            axis=0
+        )
+        corrected_H_f = correct_H_f(origin_H_f=origin_H_f, N=N, index=np.arange(num_sym), symbol_len=symbol_len,
+                                    delta=delta, fixed_phase_shift_factor=fixed_phase_shift_factor)
+    else:
+        corrected_H_f = correct_H_f(origin_H_f=origin_H_f, N=N, index=np.arange(num_sym), symbol_len=symbol_len,
+                                    delta=delta, fixed_phase_shift_factor=fixed_phase_shift_factor)
     for i, index in enumerate(pic_idx):
-        corrected_H_f = correct_H_f(origin_H_f, N, index, symbol_len, delta, fixed_phase_shift_factor)
         corrected_constellation = get_constellation(symbols_td=symbols_td[index, :],
-                                                    H_used=corrected_H_f,
+                                                    H_used=corrected_H_f[index, :],
                                                     DATA_BINS=DATA_BINS)
         ax = axes[i // n_cols, i % n_cols]
         draw_constellation_map(received=corrected_constellation, emit_pilot=pilot[index, DATA_BINS], ax=ax,
@@ -312,13 +327,24 @@ def plot_data_constellations(const, const_ref, *, data_pos=None, pic_idx=None):
     if pic_idx is None:
         n_rows, n_cols, figsize = auto_constellation_map_param(num_const)
         pic_num = n_rows * n_cols
-        pic_idx = np.linspace(start=0, stop=0 + num_const // (pic_num - 1) * (pic_num - 1), num=pic_num).astype(np.int32)
+        if pic_num > 1:
+            pic_idx = np.linspace(start=0, stop=0 + num_const // (pic_num - 1) * (pic_num - 1), num=pic_num).astype(np.int32)
+        else:
+            pic_idx = np.array([0])
     else:
         n_rows, n_cols, figsize = auto_constellation_map_param(pic_idx.size)
         pic_num = n_rows * n_cols
     fig, axes = plt.subplots(n_rows, n_cols, figsize=figsize)
     for i, index in enumerate(pic_idx):
-        ax = axes[i // n_cols, i % n_cols]
+        if index >= num_const:
+            break
+        if pic_idx.size > 1:
+            if n_rows == 1:
+                ax = axes[i]
+            else:
+                ax = axes[i // n_cols, i % n_cols]
+        else:
+            ax = axes
         draw_constellation_map(received=const[index], emit_pilot=const_ref[index],
                                ax=ax, title=f"constellation{data_pos[index]+1}", limit_border=2)
     fig.suptitle("data constellation")
@@ -363,18 +389,22 @@ def plot_snr_over_subcarrier(snr_db_per_sc: np.ndarray, sc_idx, title="SNR over 
     plt.grid(True)
     plt.show()
 
-def plot_pre_post_ber(pre_ber: np.ndarray, post_ber: np.ndarray):
+def plot_pre_post_ber(post_ber: np.ndarray, *, pre_ber: np.ndarray | None = None):
     """
     画出 pre_ber 和 post_ber 的变化情况
     pre_ber 和 post_ber 叠加在同一张图
     """
-    indices = np.arange(len(pre_ber))
+    indices = np.arange(len(post_ber))
     plt.figure(figsize=(10, 4))
-    plt.plot(indices, pre_ber, label="pre_ber", color="blue", alpha=0.5)
+    if pre_ber is not None:
+        plt.plot(indices, pre_ber, label="pre_ber", color="blue", alpha=0.5)
     plt.plot(indices, post_ber, label="post_ber", color="red", alpha=0.5)
     plt.xlabel("Index")
     plt.ylabel("BER")
-    plt.title("pre_ber & post_ber vs index")
+    if pre_ber is not None:
+        plt.title("pre_ber & post_ber vs index")
+    else:
+        plt.title("post_ber vs index")
     plt.legend()
     plt.grid(True)
     plt.show()

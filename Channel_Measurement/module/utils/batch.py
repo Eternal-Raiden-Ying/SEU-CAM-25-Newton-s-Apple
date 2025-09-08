@@ -146,7 +146,7 @@ def estimate_drift_and_origin(Hf_seq: np.ndarray, *, N: int, symbol_len: int, re
     H = np.asarray(Hf_seq)
     assert H.ndim == 2
     ratios = H[1::1]/H[:-1:1]
-    xs, phases, slopes, intercepts, deltas, phis = [], [], [], [], [], []
+    xs, phases, slopes, intercepts, deltas, phis = [], [], [], [], [0], [0]
     for ratio in ratios:
         x_auto, auto_unwrapped_phase, _ = phase_unwrap_auto(data=ratio)
         slope, intercept = fitting_line(x=x_auto, y=auto_unwrapped_phase, filter=True, residual_th=1.2)
@@ -157,7 +157,8 @@ def estimate_drift_and_origin(Hf_seq: np.ndarray, *, N: int, symbol_len: int, re
         deltas.append(slope / (symbol_len * (-2 * np.pi) / N))
         phis.append(intercept)
     origin = list()
-    for idx in range(H.shape[0]):
+    num_pilot = H.shape[0]
+    for idx in range(num_pilot):
         origin.append(correct_H_f(
             origin_H_f=H[idx],
             delta=np.sum(deltas[:idx+1]),
@@ -168,44 +169,52 @@ def estimate_drift_and_origin(Hf_seq: np.ndarray, *, N: int, symbol_len: int, re
         ))
     origin = np.array(origin)
 
-    h_abs = np.abs(origin)
-    h_mean = np.mean(h_abs, axis=0)
-    h_std = np.std(h_abs, axis=0)
-    mask = np.where(h_abs < h_mean[:None] + h_std[:None], 1, 0)
-    w = np.where(mask, mask.shape[0]/np.sum(mask, axis=0), 0)
-    origin = np.average(origin, axis=0,weights=w)
+    # h_abs = np.abs(origin)
+    # h_mean = np.mean(h_abs, axis=0)
+    # h_std = np.std(h_abs, axis=0)
+    # mask = np.where(h_abs < h_mean[:None] + h_std[:None], 1, 0)
+    # w = np.where(mask, mask.shape[0]/np.sum(mask, axis=0), 0)
+    # origin = np.average(origin, axis=0,weights=w)
+    origin = np.average(origin, axis=0)
 
-    if not return_plot_args:
-        return np.mean(deltas).astype(float), np.mean(phis).astype(float), origin
-    else:
-        if mode == 'total':
-            ratio = np.mean(H[1:]/H[:-1], axis=0)
-            x_auto, auto_unwrapped_phase, _ = phase_unwrap_auto(data=ratio)
-            slope, intercept = fitting_line(x=x_auto, y=auto_unwrapped_phase, filter=True, residual_th=1.2)
-            plot_args = {
-                'ratio': ratio,
-                'slope': np.array(slope),
-                'intercept': np.array(intercept),
-                'x_auto': np.array(x_auto),
-                'auto_unwrapped_phase': np.array(auto_unwrapped_phase),
-                'N': N
-            }
-        elif mode == 'each':
-            plot_args = {
-                'ratio': ratios,
-                'slope': np.array(slopes),
-                'intercept': np.array(intercepts),
-                'x_auto': np.array(xs),
-                'auto_unwrapped_phase': np.array(phases),
-                'N': N
-            }
+    if mode == 'total':
+        ratio = np.mean(H[1:]/H[:-1], axis=0)
+        x_auto, auto_unwrapped_phase, _ = phase_unwrap_auto(data=ratio)
+        slope, intercept = fitting_line(x=x_auto, y=auto_unwrapped_phase, filter=True, residual_th=1.2)
+        plot_args = {
+            'ratio': ratio,
+            'slope': np.array(slope),
+            'intercept': np.array(intercept),
+            'x_auto': np.array(x_auto),
+            'auto_unwrapped_phase': np.array(auto_unwrapped_phase),
+            'N': N
+        }
+        if not return_plot_args:
+            return np.sum(deltas).astype(float)/(num_pilot-1), np.sum(phis).astype(float)/(num_pilot-1), origin
         else:
-            raise ValueError(f"unknown mode {mode}")
-        return np.mean(deltas).astype(float), np.mean(phis).astype(float), origin, plot_args
+            return np.sum(deltas).astype(float)/(num_pilot-1), np.sum(phis).astype(float)/(num_pilot-1), origin, plot_args
+    elif mode == 'each':
+        plot_args = {
+            'ratio': ratios,
+            'slope': np.array(slopes),
+            'intercept': np.array(intercepts),
+            'x_auto': np.array(xs),
+            'auto_unwrapped_phase': np.array(phases),
+            'N': N
+        }
+        if not return_plot_args:
+            return np.array(deltas).astype(float), np.array(phis).astype(float), origin
+        else:
+            return np.array(deltas).astype(float), np.array(phis).astype(float), origin, plot_args
+    else:
+        raise ValueError(f"unknown mode {mode}")
+
 
 # ========= 段构建 =========
 
-def _fit_drift_between(H_start, H_end, gap, N, * , symbol_len=None, return_phi=False, plot=False, DATA_BINS=None):
+def _fit_drift_between(H_start, H_end, gap, N, * ,
+                       symbol_len=None, return_phi=False,
+                       plot: bool | int = False, DATA_BINS: np.ndarray | None = None):
     """
     用两个时间点（相隔 gap 个 OFDM）的信道估计做比值，拟合得到“每 OFDM”的
     频偏斜率 delta 以及常相位步进 phi。
@@ -225,9 +234,12 @@ def _fit_drift_between(H_start, H_end, gap, N, * , symbol_len=None, return_phi=F
         raise ValueError(f"only support dimension <= 1, received {H_start.ndim}")
     x_auto, auto_unwrapped_phase, _ = phase_unwrap_auto(data=phase_shift.flatten(), DATA_BINS=DATA_BINS, N=N)
     slope, intercept = fitting_line(x=x_auto, y=auto_unwrapped_phase, filter=True, residual_th=1.5)
-    if plot:
+    if type(plot) is bool and plot:
         from .plot import plot_unwrap_phase_fitting
         plot_unwrap_phase_fitting(phase_shift, slope, intercept,x_auto, auto_unwrapped_phase, N)
+    elif type(plot) is int:
+        from .plot import plot_unwrap_phase_fitting
+        plot_unwrap_phase_fitting(phase_shift, slope, intercept, x_auto, auto_unwrapped_phase, N, title=f'pilot {plot}')
 
     delta = slope / (gap * symbol_len * (-2 * np.pi) / N)
     phi_step = intercept / gap  # 每“一个”符号的常相位步进
@@ -285,7 +297,7 @@ def build_segments_from_pilots(H_start: np.ndarray,
                                # 全局漂移（无 comb 或尾段回退时使用）
                                delta_global: float = 0.0,
                                phi_global: float = 0.0,
-                               # 新增：若未提供 q_comb，则用这两项内部计算 q
+                               # 若未提供 q_comb，则用这两项内部计算 q
                                symbols_comb_td: Optional[np.ndarray] = None,
                                pilot_ref_comb_fd: Optional[np.ndarray] = None,
                                # 权重控制
@@ -381,6 +393,7 @@ def build_segments_from_pilots(H_start: np.ndarray,
     prev_idx = -1 if start_idx is None else start_idx
     H_ref = H_start.copy()
 
+    pb_idx = [87,98,109,120,142,208]
     H_s_list, d_list, p_list, g_list = [], [], [], []
     if Hf_comb.size > 0 and pilot_pos.size > 0:
         for j, pidx in enumerate(pilot_pos):
@@ -399,9 +412,15 @@ def build_segments_from_pilots(H_start: np.ndarray,
                 last_d, last_p = segs[-1][4], segs[-1][5]
             else:
                 last_d, last_p = float(delta_global), float(phi_global)
-            segs.append((prev_idx, M, H_ref.copy(), H_ref.copy(), float(last_d), float(last_p), len(pilot_pos)-1, int(M - prev_idx)))
+            H_end = correct_H_f(origin_H_f=H_ref,N=N,
+                                index=int(M - prev_idx),symbol_len=symbol_len,
+                                delta=last_d,fixed_phase_shift_factor=last_p)
+            segs.append((prev_idx, M, H_ref.copy(), H_end.copy(), float(last_d), float(last_p), len(pilot_pos)-1, int(M - prev_idx)))
     else:
-        segs.append((prev_idx, M, H_start.copy(), H_start.copy(), float(delta_global), float(phi_global), -1, int(M - prev_idx)))
+        H_end = correct_H_f(origin_H_f=H_ref, N=N,
+                            index=int(M - prev_idx), symbol_len=symbol_len,
+                            delta=delta_global, fixed_phase_shift_factor=phi_global)
+        segs.append((prev_idx, M, H_start.copy(), H_end.copy(), float(delta_global), float(phi_global), -1, int(M - prev_idx)))
 
     # ------- 2) 准备每段的 q（若未传 q_comb 则内部计算） -------
     q_list = None
@@ -449,7 +468,7 @@ def build_segments_from_pilots(H_start: np.ndarray,
         i_vals = data_pos[idxs].astype(float)
 
         dt_from_start = i_vals - float(start_idx)
-        near_idx = float(end_idx) if (Hf_comb.size > 0) else float(start_idx)
+        near_idx = float(end_idx)
         dt_from_near  = i_vals - near_idx
         d1 = np.maximum(dt_from_start, 0.0)
         d2 = np.abs(dt_from_near)
@@ -854,4 +873,86 @@ def pll_snr_median(const_zf: np.ndarray) -> np.ndarray:
         return 10.0 * np.log10(np.median(np.clip(snr_sc, 1e-12, None), axis=-1))
 
 
+def contiguous_bounds(a):
+    if len(a) == 0:
+        return np.array([], dtype=a.dtype)
 
+    # 找到不连续的位置
+    breaks = np.where(np.diff(a) > 1)[0] + 1
+
+    # 每一段的起点和终点
+    starts = np.r_[a[0], a[breaks]]
+    ends = np.r_[a[breaks - 1], a[-1]]
+
+    # 拼接结果，避免重复
+    result = []
+    for s, e in zip(starts, ends):
+        if s == e:
+            result.append(s)
+        else:
+            result.extend([s, e])
+
+    return np.array(result, dtype=a.dtype)
+
+
+def choose_next_pilots(
+    data_pos: np.ndarray,
+    available_pilots: np.ndarray,
+    edge_expand_k: int = 1,
+) -> np.ndarray:
+    """
+    从 available_pilots 中，按 data 连续段边界挑选下一轮 pilot。
+    规则：
+      - data_pos 为空：返回空数组（无需 pilot）
+      - 对每个连续段 [L, R]：
+          右侧：取位于 R 之后的连续 <= k 个可选 pilot
+          左侧：取位于 L 之前的连续 <= k 个可选 pilot
+      - 去重、升序，只从 available_pilots 中选，绝不越界
+    """
+    # 规范化输入
+    data_pos = np.array(data_pos, dtype=int).reshape(-1)
+    available_pilots = np.array(available_pilots, dtype=int).reshape(-1)
+    if data_pos.size == 0:
+        return np.zeros(0, dtype=int)
+    if available_pilots.size == 0 or edge_expand_k <= 0:
+        return np.zeros(0, dtype=int)
+
+    data_pos = np.unique(data_pos)
+    available_pilots = np.unique(available_pilots)
+    P = available_pilots.size
+
+    # ---- 自行分段：把 data_pos 拆成 [(L1,R1), (L2,R2), ...] ----
+    segments = []
+    start = prev = data_pos[0]
+    for v in data_pos[1:]:
+        if v == prev + 1:
+            prev = v
+        else:
+            segments.append((start, prev))
+            start = prev = v
+    segments.append((start, prev))
+
+    chosen = []
+    for L, R in segments:
+        # 右侧：第一个 >= R+1 的 pilot 起，取连续 k 个
+        ridx = np.searchsorted(available_pilots, R + 1, side="left")
+        if ridx < P:
+            r_end = min(ridx + edge_expand_k, P)
+            if r_end > ridx:
+                chosen.extend(available_pilots[ridx:r_end].tolist())
+
+        # 左侧：最后一个 <= L-1 的 pilot 起，向左取连续 k 个
+        lidx = np.searchsorted(available_pilots, L, side="left") - 1
+        if lidx >= 0:
+            l_start = max(lidx - edge_expand_k + 1, 0)
+            if lidx + 1 > l_start:
+                chosen.extend(available_pilots[l_start:lidx + 1].tolist())
+
+    if not chosen:
+        return np.zeros(0, dtype=int)
+
+    chosen = np.array(chosen, dtype=int)
+    chosen = np.unique(chosen)  # 去重 + 升序
+    # 保险：只保留可用集合中的
+    mask = np.isin(chosen, available_pilots)
+    return chosen[mask]
