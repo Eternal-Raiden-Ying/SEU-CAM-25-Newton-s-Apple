@@ -6,7 +6,7 @@ from module.receiver.receiver_develop import receiver as receiver_dev
 from module.receiver.receiver_oop_dev import receiver as receiver_oop
 
 
-project_dir = r"D:\Documents\Coding\Python\SEUCAM"
+project_dir = r"D:\Pycharm\SEU-CAM-25-Newton-s-Apple"
 output_dir = os.path.join(project_dir, "Channel_Measurement/output/ldpc")
 record_dir = os.path.join(project_dir, "Channel_Measurement/record")
 data_dir = os.path.join(project_dir, "Channel_Measurement/data")
@@ -18,8 +18,10 @@ if __name__ == "__main__":
         if not os.path.exists(dir_name):
             os.makedirs(dir_name)
 
-    rx_pth = r"D:\Documents\Coding\Python\SEUCAM\Channel_Measurement\record\temp\[smy]received_tiff_chirp_l2_10_24k_fs48k_N8192_cp1024_S8same_R1-2_Z81_802.11n_A_random256_front_0.8_head_no_comb_1.npy"
-    pilot_pth = r'D:\Documents\Coding\Python\SEUCAM\Channel_Measurement\record\pilot\pilot_8same_N8192_seed256.npy'
+    rx_pth = os.path.join("record", "LDPC",
+                          "[tzc]received_txt_chirp_l2_10_24k_fs48k_N8192_cp1024_S8diff_R3-4_Z27_802.11n_A_random_middle_0.8_2.npy")
+    pilot_pth = os.path.join("save", "pilot", "pilot_different_N8192_fixed.npy")
+    tx_file_path = os.path.join("data", "answer.tiff")
 
     plot_opt = {
         'correlation':                      False,
@@ -46,7 +48,7 @@ if __name__ == "__main__":
         INTERVAL=None, COMB_PILOT_SEED_BASE=128,
         # groundtruth
         groundtruth=True, head_bit=64,
-        tx_file_path=r"D:\Documents\Coding\Python\SEUCAM\Channel_Measurement\data\answer.tiff",
+        tx_file_path=tx_file_path,
         # scrambler param
         scrambler_seed=256, scrambler_mode='random', scrambler_bitwidth=None, clockwise=False,
         # ldpc param
