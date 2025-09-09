@@ -1,7 +1,10 @@
 import warnings
-
 import numpy as np
-__all__ = ['phase_unwrap', 'fitting_line', 'normalize', 'phase_unwrap_auto', 'unique_sorted']
+from typing import Optional, Tuple
+from scipy.interpolate import CubicSpline, UnivariateSpline
+
+__all__ = ['phase_unwrap', 'fitting_line', 'normalize', 'phase_unwrap_auto',
+           'unique_sorted', 'segment_means_on']
 
 def unique_sorted(x):
     if len(x) == 0:
@@ -75,19 +78,6 @@ def fitting_line(x, y,*, filter=True, residual_th=2):
         slope, intercept = coeffs
 
     return slope, intercept
-
-
-def smooth_H_moving_average(H_f, window_size=11):
-    """
-        few use
-    :param H_f:
-    :param window_size:
-    :return:
-    """
-    window = np.ones(window_size) / window_size
-    H_real = np.convolve(H_f.real, window, mode='same')
-    H_imag = np.convolve(H_f.imag, window, mode='same')
-    return H_real + 1j * H_imag
 
 
 def normalize(data: np.ndarray,*, axis=-1, keepdim=False):
@@ -310,6 +300,161 @@ def phase_unwrap_auto(
         })
 
     return x_full, unwrap_full, meta
+
+
+def _build_cumulative_spline(
+    freq_offsets: np.ndarray,
+    ofdm_idx: np.ndarray,
+    smoothing: float = 0.0,
+    preserve_endpoints: bool = True,
+    endpoint_weight: float = 1e6,
+    bc_type: str = "natural",
+):
+    """
+    在累计量 F(x) 上拟合三次样条（x 以符号索引替代时间）。
+    freq_offsets[k] 是 [ofdm_idx[k], ofdm_idx[k+1]) 的段均值。
+    返回: 可在区间内外求值的 F(x) 样条对象。
+    """
+    freq_offsets = np.asarray(freq_offsets, dtype=float)
+    ofdm_idx = np.asarray(ofdm_idx, dtype=float)
+
+    L = freq_offsets.size
+    if ofdm_idx.size != L + 1:
+        raise ValueError("len(ofdm_idx) must be len(freq_offsets)+1")
+    if not np.all(np.diff(ofdm_idx) > 0):
+        raise ValueError("ofdm_idx must be strictly increasing")
+
+    seg_len = np.diff(ofdm_idx)                # 段长度（符号数或等效时间）
+    if np.any(seg_len <= 0):
+        raise ValueError("Non-positive segment length found.")
+
+    # 每段积分增量 ΔF_k = 段均值 * 段长
+    delta_F = freq_offsets * seg_len
+
+    # 边界累计量 F(t_i)
+    F = np.zeros(L + 1, dtype=float)
+    F[1:] = np.cumsum(delta_F)
+
+    x = ofdm_idx
+
+    if smoothing is None or smoothing <= 0:
+        # 精确插值：严格保持原大段积分
+        if bc_type.lower() == "clamped":
+            # dF/dx=δfs；端点导数用首/末段均值近似
+            bc = ((1, freq_offsets[0]), (1, freq_offsets[-1]))
+        elif bc_type.lower() == "natural":
+            bc = "natural"
+        else:
+            raise ValueError("bc_type must be 'natural' or 'clamped'")
+        spline_F = CubicSpline(x, F, bc_type=bc, extrapolate=True)
+    else:
+        # 平滑样条：牺牲严格等式，换更平滑的 δfs
+        w = np.ones_like(F)
+        if preserve_endpoints:
+            w[0] *= endpoint_weight
+            w[-1] *= endpoint_weight
+        spline_F = UnivariateSpline(x, F, w=w, s=float(smoothing), k=3)
+        # UnivariateSpline 默认允许区间外求值
+
+    return spline_F
+
+
+def _interval_mean_with_extrap(
+    spline_F, x_min: float, x_max: float, a: float, b: float, extrap: str
+) -> float:
+    """
+    计算 [a,b] 上的平均值：(F(b)-F(a))/(b-a)，带外推策略。
+    extrap='spline'  : 直接用样条在区间外求值
+    extrap='hold'    : 区间外保持 δfs 常值（F 线性延拓）
+    """
+    if b <= a:
+        raise ValueError("Empty or negative interval.")
+
+    if extrap == "spline":
+        return (spline_F(b) - spline_F(a)) / (b - a)
+
+    elif extrap == "hold":
+        # 预备：边界处的一阶导数（δfs）
+        dF = spline_F.derivative(1)
+        delta_left = dF(x_min)
+        delta_right = dF(x_max)
+
+        total = 0.0
+        # 左侧区间外
+        if a < x_min:
+            left_end = min(b, x_min)
+            total += delta_left * (left_end - a)
+            a = left_end  # 把左外部分耗尽
+
+        # 右侧区间外
+        right_start = max(a, x_max)
+        if b > x_max:
+            # 先加中间部分（如果还有）
+            if right_start > a:
+                total += spline_F(right_start) - spline_F(a)
+            # 再加右外部分
+            total += delta_right * (b - max(a, x_max))
+        else:
+            # 完全在区间内（或左外已处理）
+            if b > a:
+                total += spline_F(b) - spline_F(a)
+
+        return total / (b - (a if a < b else a))  # 分母是原始区间长度
+
+    else:
+        raise ValueError("extrap must be 'spline' or 'hold'")
+
+
+def segment_means_on(
+    freq_offsets: np.ndarray,
+    ofdm_idx: np.ndarray,
+    eval_idx: np.ndarray,
+    smoothing: float = 0.0,
+    preserve_endpoints: bool = True,
+    endpoint_weight: float = 1e6,
+    bc_type: str = "natural",
+    extrap: str = "spline",  # 'spline' 或 'hold'
+) -> np.ndarray:
+    """
+    在新的边界 eval_idx 上计算“新段均值”。允许 eval_idx 超出原始 ofdm_idx（外推）。
+
+    参数
+    ----
+    freq_offsets : (L,)      原始大段的平均值
+    ofdm_idx     : (L+1,)    原始大段边界（升序）
+    eval_idx     : (M+1,)    新边界（升序；可超出原范围以触发外推）
+    smoothing    : float     平滑参数；0 保积分严格，>0 更平滑（原段积分近似）
+    bc_type      : str       'natural' 或 'clamped'（仅 s<=0 时）
+    extrap       : str       'spline' 直接样条外推；'hold' 区间外保持 δfs 常值
+
+    返回
+    ----
+    new_means : (M,)         每个 [eval_idx[k], eval_idx[k+1]] 的平均值
+    """
+    spline_F = _build_cumulative_spline(
+        freq_offsets, ofdm_idx,
+        smoothing=smoothing,
+        preserve_endpoints=preserve_endpoints,
+        endpoint_weight=endpoint_weight,
+        bc_type=bc_type,
+    )
+
+    eval_idx = np.asarray(eval_idx, dtype=float)
+    if eval_idx.ndim != 1 or eval_idx.size < 2:
+        raise ValueError("eval_idx must have length >= 2.")
+    if not np.all(np.diff(eval_idx) > 0):
+        raise ValueError("eval_idx must be strictly increasing.")
+
+    x_min, x_max = float(ofdm_idx[0]), float(ofdm_idx[-1])
+    a = eval_idx[:-1]
+    b = eval_idx[1:]
+
+    new_means = np.empty_like(a, dtype=float)
+    for i in range(a.size):
+        new_means[i] = _interval_mean_with_extrap(spline_F, x_min, x_max, a[i], b[i], extrap)
+
+    return new_means
+
 
 if __name__ == "__main__":
     # here you can test these function if you are not familiar with them

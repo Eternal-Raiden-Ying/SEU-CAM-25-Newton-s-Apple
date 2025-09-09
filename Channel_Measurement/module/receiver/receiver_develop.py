@@ -152,8 +152,8 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
     sym_pilot_td = get_symbols(rx_pilot_td, cp_len=cp_len, N=N)         # [num_pilot, N] 时域
     Hf_pilot = evaluate_H_f(sym_pilot_td, pilots_fd=pilot)              # [num_pilot, N]
     res_arg = estimate_drift_and_origin(Hf_pilot, N=N, symbol_len=symbol_len, return_plot_args=plot_opt['unwrap'], mode='each')
-    delta0 = np.mean(res_arg[0]) if res_arg[0].size > 1 else res_arg[0]
-    phi0 = np.mean(res_arg[1]) if res_arg[1].size > 1 else res_arg[1]
+    delta0 = np.median(res_arg[0]) if res_arg[0].size > 1 else res_arg[0]
+    phi0 = np.median(res_arg[1]) if res_arg[1].size > 1 else res_arg[1]
     origin_H_f = res_arg[2]
     freq_bias = fs / (delta0 + 1) - fs
 
@@ -204,6 +204,7 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
     rx_data_td = rx[ofdm_start + num_pilot * (N + cp_len):]
     symbols_all_td = get_symbols(rx_data_td, N=N, cp_len=cp_len)        # [M_guess, N]
     M_guess = symbols_all_td.shape[0]
+    M_guess = 215
     file_bits = 0
 
     if head_bit:
@@ -233,8 +234,8 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
             Hf_comb_T = evaluate_H_f(symbols_comb_T_td, pilot_ref_comb_fd_T, DATA_BINS)
 
             # 段构建（质量加权的“前导最后一块 + 最近 comb”）
-            pilot_pred_param_T, seg_T = build_segments_from_pilots(
-                H_start=Hf_pilot[-1], Hf_comb=Hf_comb_T, pilot_pos=pilot_pos_T, M=T,
+            _, seg_T = build_segments_from_pilots(
+                H_start=Hf_pilot[-1], Hf_comb=Hf_comb_T, pilot_pos=pilot_pos_T, M=T, fs=fs,
                 DATA_BINS=DATA_BINS, q_comb=None, mode="quality_distance",
                 symbol_len=symbol_len, N=N, delta_global=delta0, phi_global=phi0,
                 symbols_comb_td=symbols_comb_T_td, pilot_ref_comb_fd=pilot_ref_comb_fd_T
@@ -357,7 +358,8 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
     pilot_ref_comb_fd_global = pilot_ref_comb_fd_global_full[:, DATA_BINS] \
         if pilot_pos_global.size else np.zeros((0, Nd), complex)
     pilot_ref_comb_fd = pilot_ref_comb_fd_global.copy()
-
+    if not args.use_comb:
+        pilot_pos = np.array([])
 
     while circle_flag and (iter_pseudo < max_pseudo_iter):
         n_comb = pilot_pos.size
@@ -368,7 +370,7 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
         pilot_pred_param, seg = build_segments_from_pilots(
             H_start=Hf_pilot[-1], Hf_comb=Hf_comb, pilot_pos=pilot_pos, data_pos=data_pos,
             M=M_total, DATA_BINS=DATA_BINS, q_comb=None, mode="quality_distance",
-            symbol_len=symbol_len, N=N, delta_global=delta0, phi_global=phi0,
+            symbol_len=symbol_len, N=N, fs=fs, delta_global=delta0, phi_global=phi0,
             symbols_comb_td=symbols_comb_td, pilot_ref_comb_fd=pilot_ref_comb_fd
         )
 
@@ -378,10 +380,10 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
             Hf=correct_H_f(origin_H_f=pilot_pred_param['H_start'], delta=pilot_pred_param['delta'],
                            fixed_phase_shift_factor=pilot_pred_param['phi'], index=pilot_pred_param['gap'],
                            N=N, symbol_len=symbol_len)
-            ) if n_comb else {"q": np.array([]), "snr_db_med": np.array([])})
+            ) if n_comb else {"snr_db_med": np.array([]), "ber": np.array([])})
 
 
-        if plot and plot_opt['snr_time_comb']:
+        if plot and plot_opt['snr_time_comb'] and n_comb:
             plot_snr_over_time(comb_metrics["snr_db_med"], title="Comb Pilot SNR over OFDM symbols", pos=pilot_pos)
         if print_flag and n_comb:
             print('index    delta           phi')
@@ -559,14 +561,6 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
         # 进入下一轮
         iter_pseudo += 1
         continue
-
-
-    # TODO: groundtruth模式中，BER处理逻辑新增在这里
-
-    # if groundtruth and plot and plot_opt['BER_show']:
-    #     plot_pre_post_ber(pre_ber, post_ber)
-    #     plt.scatter(np.arange(syn.size),syn, s=1)
-    #     plt.show()
 
     # 与发端一致：收端解码后再加扰，得到最终位流（含 64bit 头）
     decoded_bits_raw = scramble_bits(info_blocks.flatten(), seed=scr_seed, mode=scr_mode, bit_width=scr_bitwidth).ravel()

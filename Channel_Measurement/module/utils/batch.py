@@ -19,7 +19,7 @@ import warnings
 import numpy as np
 from typing import Dict, Tuple, Optional
 from scipy.signal import correlate as sp_correlate
-from .math_process import phase_unwrap_auto, fitting_line
+from .math_process import phase_unwrap_auto, fitting_line, segment_means_on
 from .ldpc_jossy import code
 from .demodulate import _qpsk_hard, QPSK_reflection, get_constellation
 
@@ -169,13 +169,13 @@ def estimate_drift_and_origin(Hf_seq: np.ndarray, *, N: int, symbol_len: int, re
         ))
     origin = np.array(origin)
 
-    # h_abs = np.abs(origin)
-    # h_mean = np.mean(h_abs, axis=0)
-    # h_std = np.std(h_abs, axis=0)
-    # mask = np.where(h_abs < h_mean[:None] + h_std[:None], 1, 0)
-    # w = np.where(mask, mask.shape[0]/np.sum(mask, axis=0), 0)
-    # origin = np.average(origin, axis=0,weights=w)
-    origin = np.average(origin, axis=0)
+    h_abs = np.abs(origin)
+    h_mean = np.mean(h_abs, axis=0)
+    h_std = np.std(h_abs, axis=0)
+    mask = np.where(h_abs < h_mean[:None] + h_std[:None], 1, 0)
+    w = np.where(mask, mask.shape[0]/np.sum(mask, axis=0), 0)
+    origin = np.average(origin, axis=0,weights=w)
+    # origin = np.average(origin, axis=0)
 
     if mode == 'total':
         ratio = np.mean(H[1:]/H[:-1], axis=0)
@@ -232,7 +232,7 @@ def _fit_drift_between(H_start, H_end, gap, N, * ,
         phase_shift = H_end[DATA_BINS] * np.conj(H_start[DATA_BINS])
     else:
         raise ValueError(f"only support dimension <= 1, received {H_start.ndim}")
-    x_auto, auto_unwrapped_phase, _ = phase_unwrap_auto(data=phase_shift.flatten(), DATA_BINS=DATA_BINS, N=N)
+    x_auto, auto_unwrapped_phase, meta = phase_unwrap_auto(data=phase_shift.flatten(), DATA_BINS=DATA_BINS, N=N)
     slope, intercept = fitting_line(x=x_auto, y=auto_unwrapped_phase, filter=True, residual_th=1.5)
     if type(plot) is bool and plot:
         from .plot import plot_unwrap_phase_fitting
@@ -294,6 +294,8 @@ def build_segments_from_pilots(H_start: np.ndarray,
                                start_idx: int | None = None,
                                symbol_len: int,
                                N: int,
+                               fs: float = 48000,
+                               delta_guard_th: float = 1e-4,
                                # 全局漂移（无 comb 或尾段回退时使用）
                                delta_global: float = 0.0,
                                phi_global: float = 0.0,
@@ -393,13 +395,17 @@ def build_segments_from_pilots(H_start: np.ndarray,
     prev_idx = -1 if start_idx is None else start_idx
     H_ref = H_start.copy()
 
-    pb_idx = [87,98,109,120,142,208]
+    pb_idx = [10,43,109]
+    valid_pilot_list = [-1]
     H_s_list, d_list, p_list, g_list = [], [], [], []
     if Hf_comb.size > 0 and pilot_pos.size > 0:
         for j, pidx in enumerate(pilot_pos):
             gap = int(pidx - prev_idx)
             d_j, p_j = _fit_drift_between(H_ref, Hf_comb[j], gap, N=N, symbol_len=symbol_len,
                                           return_phi=True, DATA_BINS=DATA_BINS, plot=False)
+            # if np.abs(d_j) > delta_guard_th:
+            #     continue
+            valid_pilot_list.append(pidx)
             H_s_list.append(H_ref.copy())
             d_list.append(d_j)
             p_list.append(p_j)
@@ -421,6 +427,31 @@ def build_segments_from_pilots(H_start: np.ndarray,
                             index=int(M - prev_idx), symbol_len=symbol_len,
                             delta=delta_global, fixed_phase_shift_factor=phi_global)
         segs.append((prev_idx, M, H_start.copy(), H_end.copy(), float(delta_global), float(phi_global), -1, int(M - prev_idx)))
+
+    # freq_offset
+    deltas = np.array(d_list)
+    freq_offsets = fs/ (deltas+1) - fs
+    ofdm_idx = np.array(valid_pilot_list)
+    # here new_deltas[0] correspond to Hf[0]/Hf[-1]
+    if ofdm_idx.size > 1:
+        interp_freq_offset = segment_means_on(freq_offsets=freq_offsets.copy(), ofdm_idx=ofdm_idx,
+                                              eval_idx=np.concatenate([np.array([-1]),all_idx]),
+                                              smoothing=0.0, extrap='spline')
+        new_deltas = 1 / (interp_freq_offset / fs + 1) - 1
+
+        from matplotlib import pyplot as plt
+        plt.plot(all_idx, interp_freq_offset)
+        plt.scatter(all_idx - 0.5, interp_freq_offset, marker='*', color='red', label='interpolate')
+        plt.scatter(np.arange(pilot_pos[-1] + 1) - 0.5, np.repeat(freq_offsets, np.diff(ofdm_idx)), marker='o', s=4,
+                    color='black', label='comb pilot')
+        for i in ofdm_idx:
+            plt.axvline(i, linestyle='dotted', color='black')
+        plt.axvline(M - 1, linestyle='dotted', color='black')
+        plt.legend()
+        plt.show()
+
+    else:
+        new_deltas = None
 
     # ------- 2) 准备每段的 q（若未传 q_comb 则内部计算） -------
     q_list = None
@@ -450,14 +481,15 @@ def build_segments_from_pilots(H_start: np.ndarray,
     # else: q_list 维持 None -> 仅按距离权重
 
     # ------- 3) 为每个数据符号映射段参数并计算权重 -------
-    H_start_per = np.empty((n_data, N), dtype=H_start.dtype)
-    H_near_per  = np.empty((n_data, N), dtype=H_start.dtype)
-    delta_per   = np.empty(n_data, dtype=float)
-    phi_per     = np.empty(n_data, dtype=float)
-    dt1         = np.empty(n_data, dtype=float)
-    dt2         = np.empty(n_data, dtype=float)
-    w1          = np.empty(n_data, dtype=float)
-    w2          = np.empty(n_data, dtype=float)
+    H_start_per  = np.empty((n_data, N), dtype=H_start.dtype)
+    H_near_per   = np.empty((n_data, N), dtype=H_start.dtype)
+    delta_from_s = np.empty(n_data, dtype=float)
+    delta_from_e = np.empty(n_data, dtype=float)
+    phi_per      = np.empty(n_data, dtype=float)
+    dt1          = np.empty(n_data, dtype=float)
+    dt2          = np.empty(n_data, dtype=float)
+    w1           = np.empty(n_data, dtype=float)
+    w2           = np.empty(n_data, dtype=float)
 
     ptr = 0
     for (start_idx, end_idx, Hs, Hn, d_j, p_j, j_idx, gap) in segs:
@@ -472,6 +504,19 @@ def build_segments_from_pilots(H_start: np.ndarray,
         dt_from_near  = i_vals - near_idx
         d1 = np.maximum(dt_from_start, 0.0)
         d2 = np.abs(dt_from_near)
+
+        # 计算comb到data的平均delta, new_deltas中的delta是相邻symbol的
+        if new_deltas is not None:
+            if pilot_pos[-1] < M-1 and end_idx == M:
+                delta_used_mask = np.concatenate([i_vals.astype(int)])
+                delta_used = new_deltas[delta_used_mask]
+                delta_from_start = np.array([np.sum(delta_used[:i]) / i for i in range(1, delta_used.size+1)])
+                delta_from_end = np.repeat([d_j], i_vals.size)
+            else:
+                delta_used_mask = np.concatenate([i_vals.astype(int), np.array([end_idx])])
+                delta_used = new_deltas[delta_used_mask]
+                delta_from_start = np.array([np.sum(delta_used[:i])/i for i in range(1,delta_used.size)])
+                delta_from_end = np.array([np.sum(delta_used[-i:])/i for i in range(1, delta_used.size)])[::-1]
 
         # 质量因子：本段对应的 comb 质量（若不可得则为 1）
         if q_list is not None and j_idx is not None and j_idx >= 0 and j_idx < q_list.size:
@@ -488,25 +533,17 @@ def build_segments_from_pilots(H_start: np.ndarray,
         cnt = idxs.size
         H_start_per[ptr:ptr+cnt, :] = Hs[None, :]
         H_near_per[ptr:ptr+cnt,  :] = Hn[None, :]
-        delta_per[ptr:ptr+cnt]       = d_j
-        phi_per[ptr:ptr+cnt]         = p_j
-        dt1[ptr:ptr+cnt]             = dt_from_start
-        dt2[ptr:ptr+cnt]             = dt_from_near
-        w1[ptr:ptr+cnt]              = w1_seg
-        w2[ptr:ptr+cnt]              = w2_seg
+        delta_from_s[ptr:ptr+cnt]   = delta_from_start if new_deltas is not None else d_j
+        delta_from_e[ptr:ptr+cnt]   = delta_from_end if new_deltas is not None else d_j
+        phi_per[ptr:ptr+cnt]        = p_j
+        dt1[ptr:ptr+cnt]            = dt_from_start
+        dt2[ptr:ptr+cnt]            = dt_from_near
+        w1[ptr:ptr+cnt]             = w1_seg
+        w2[ptr:ptr+cnt]             = w2_seg
         ptr += cnt
 
     if ptr < n_data:
-        warnings.warn("Unexpected Error! check the logic in segments building")
-        Hs, Hn, d_j, p_j = segs[-1][2], segs[-1][3], segs[-1][4], segs[-1][5]
-        H_start_per[ptr:, :] = Hs[None, :]
-        H_near_per[ptr:,  :] = Hn[None, :]
-        delta_per[ptr:]       = d_j
-        phi_per[ptr:]         = p_j
-        dt1[ptr:]             = (data_pos[ptr:] - segs[-1][0]).astype(float)
-        dt2[ptr:]             = (data_pos[ptr:] - float(segs[-1][1])).astype(float)
-        w1[ptr:]              = 1.0
-        w2[ptr:]              = 0.0
+        raise RuntimeError("Unexpected Error! check the logic in segments building")
 
     pilot_seg = {
         'H_start': np.array(H_s_list),
@@ -516,12 +553,12 @@ def build_segments_from_pilots(H_start: np.ndarray,
     }
     data_seg = {
         "H_start_per_seg":           H_start_per,
-        "delta_per_seg":             delta_per,
+        "delta_per_seg":             delta_from_s,
         "phi_per_seg":               phi_per,
         "dt_from_start_per_sym":     dt1,
 
         "H_near_per_sym":            H_near_per,
-        "delta_per_seg_per_sym":     delta_per,
+        "delta_per_seg_per_sym":     delta_from_e,
         "phi_per_seg_per_sym":       phi_per,
         "dt_from_near_per_sym":      dt2,
 
@@ -871,28 +908,6 @@ def pll_snr_median(const_zf: np.ndarray) -> np.ndarray:
         ref = _qpsk_hard(s)                                     # [n, Nd]
         snr_sc = snr_from_constellation(s, ref)                 # [n, Nd]
         return 10.0 * np.log10(np.median(np.clip(snr_sc, 1e-12, None), axis=-1))
-
-
-def contiguous_bounds(a):
-    if len(a) == 0:
-        return np.array([], dtype=a.dtype)
-
-    # 找到不连续的位置
-    breaks = np.where(np.diff(a) > 1)[0] + 1
-
-    # 每一段的起点和终点
-    starts = np.r_[a[0], a[breaks]]
-    ends = np.r_[a[breaks - 1], a[-1]]
-
-    # 拼接结果，避免重复
-    result = []
-    for s, e in zip(starts, ends):
-        if s == e:
-            result.append(s)
-        else:
-            result.extend([s, e])
-
-    return np.array(result, dtype=a.dtype)
 
 
 def choose_next_pilots(
