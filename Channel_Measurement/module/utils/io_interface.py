@@ -64,12 +64,12 @@ def save_pilot(constellations: np.ndarray, N: int, pth, filename):
 
 
 
-def u40_to_bits_msb(n: int) -> np.ndarray:
+def num_to_bits_msb(n: int,* ,bit_num: int = 40) -> np.ndarray:
     """
     把整数 n 转 40bit（MSB-first）。用于“文件大小（bit数）”。
     """
-    assert 0 <= n < (1 << 40), "payload length must fit in 40 bits"
-    b = np.zeros(40, dtype=np.uint8)
-    for k in range(40):
-        b[k] = (n >> (39 - k)) & 1
+    assert 0 <= n < (1 << bit_num), f"payload length must fit in {bit_num} bits"
+    b = np.zeros(bit_num, dtype=np.uint8)
+    for k in range(bit_num):
+        b[k] = (n >> (bit_num -1 - k)) & 1
     return b

@@ -304,7 +304,11 @@ def build_segments_from_pilots(H_start: np.ndarray,
                                pilot_ref_comb_fd: Optional[np.ndarray] = None,
                                # 权重控制
                                distance_power: float = 1.0,
-                               eps: float = 1.0) -> Tuple[Dict[str, np.ndarray], Dict[str, Optional[np.ndarray, float]]]:
+                               eps: float = 1.0,
+                               # 插值控制
+                               interp_smooth: float = 0.0,
+                               interp_mode: str = 'hold',
+                               interp_plot: bool = False) -> Tuple[Dict[str, np.ndarray], Dict[str, Optional[np.ndarray, float]]]:
     """
         构建“段（segment）级”的信道参考与漂移参数，并为每个数据 OFDM 符号给出两路参考的
         外推间隔（dt）与融合权重（w1, w2）。本函数还可在未显式提供 comb 质量 q 时，内部评估
@@ -436,20 +440,19 @@ def build_segments_from_pilots(H_start: np.ndarray,
     if ofdm_idx.size > 1:
         interp_freq_offset = segment_means_on(freq_offsets=freq_offsets.copy(), ofdm_idx=ofdm_idx,
                                               eval_idx=np.concatenate([np.array([-1]),all_idx]),
-                                              smoothing=0.0, extrap='hold')
+                                              smoothing=interp_smooth, extrap=interp_mode)
         new_deltas = 1 / (interp_freq_offset / fs + 1) - 1
-
-        from matplotlib import pyplot as plt
-        plt.plot(all_idx, interp_freq_offset)
-        plt.scatter(all_idx - 0.5, interp_freq_offset, marker='*', color='red', label='interpolate')
-        plt.scatter(np.arange(pilot_pos[-1] + 1) - 0.5, np.repeat(freq_offsets, np.diff(ofdm_idx)), marker='o', s=4,
-                    color='black', label='comb pilot')
-        for i in ofdm_idx:
-            plt.axvline(i, linestyle='dotted', color='black')
-        plt.axvline(M - 1, linestyle='dotted', color='black')
-        plt.legend()
-        plt.show()
-
+        if interp_plot:
+            from matplotlib import pyplot as plt
+            plt.plot(all_idx, interp_freq_offset)
+            plt.scatter(all_idx - 0.5, interp_freq_offset, marker='*', color='red', label='interpolate')
+            plt.scatter(np.arange(pilot_pos[-1] + 1) - 0.5, np.repeat(freq_offsets, np.diff(ofdm_idx)), marker='o', s=4,
+                        color='black', label='comb pilot')
+            for i in ofdm_idx:
+                plt.axvline(i, linestyle='dotted', color='black')
+            plt.axvline(M - 1, linestyle='dotted', color='black')
+            plt.legend()
+            plt.show()
     else:
         new_deltas = None
 

@@ -18,24 +18,26 @@ if __name__ == "__main__":
         if not os.path.exists(dir_name):
             os.makedirs(dir_name)
 
-    rx_pth = os.path.join("record", "LDPC",
-                          "[smy]tiff_front0.05_later_0.2_nocombed_recorded_signals_1.npy")
-    pilot_pth = os.path.join("save", "pilot", "pilot_8different_N8192_fixed.npy")
+    rx_pth = os.path.join("record", "LDPC", "success",
+                          "[tzc]received_tiff_chirp_l2_10_24k_fs48k_N8192_cp1024_S8same_R1-2_Z81_802.11n_A_no_scrambler_0.05-0.8_head_no_comb_4.npy")
+    pilot_pth = os.path.join("save", "pilot", "pilot_8same_N8192_fixed.npy")
     tx_file_path = os.path.join("data", "answer.tiff")
+    # rx_pth = r"D:\Documents\Coding\Python\SEUCAM\Channel_Measurement\test.npy"
 
     plot_opt = {
         'correlation':                      False,
-        'impulse_response':                 False,
-        'raw_pilot_constellation':          False,
-        'corrected_pilot_constellation':    False,
+        'impulse_response':                 True,
+        'raw_pilot_constellation':          True,
+        'corrected_pilot_constellation':    True,
         'data_constellation':               True,
         'unwrap':                           False,
-        'received_signal':                  False,
+        'received_signal':                  True,
         'BER_show':                         True,
         'snr_time_pilot':                   False,  # 导频阶段的平均 SNR(随符号)曲线
         'snr_time_comb':                    False,
         'snr_time_data':                    False,  # 数据阶段（判决导向统计）的 SNR(随符号)曲线
         'snr_over_sc':                      False,  # 跨子载波的平均 SNR 曲线 (data symbol)
+        'freq_offset_interpolate':          True
     }
 
     suffix_map = {
@@ -51,7 +53,9 @@ if __name__ == "__main__":
         # chirp param
         data_start=204, data_tail=819,
         # comb param
-        INTERVAL=None, COMB_PILOT_SEED_BASE=128, use_comb=False,
+        INTERVAL=None, COMB_PILOT_SEED_BASE=128, use_comb=True,
+        # frequency offset interpolate
+        interp_mode='hold', interp_smooth=0.0,
         # groundtruth
         groundtruth=True, head_bit=64, size_bit_w=40, type_bit_w=24,suffix_map={v: k for k,v in suffix_map.items()},
         tx_file_path=tx_file_path,
@@ -76,12 +80,14 @@ if __name__ == "__main__":
         # print settings
         print_flag=True, print_len=64, print_pad='-', iter_verbose=True
     )
-    rx = np.load(rx_pth)
+    rx = np.load(rx_pth).ravel()
     pilot = np.load(pilot_pth)
     decoded_info, info = receiver_dev(rx, pilot, args)
+
     print(f"ldpc iter: {info['ldpc_iter']}")
     if args.groundtruth:
         print(f"post_ber: {info['post_ber']}")
+
 
     bytes = np.packbits(decoded_info.flatten())
     if getattr(args, 'type_bit_w', 0):

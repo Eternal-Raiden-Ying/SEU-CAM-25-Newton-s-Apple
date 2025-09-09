@@ -2,16 +2,14 @@
 from __future__ import annotations
 import numpy as np
 import argparse
-from matplotlib import pyplot as plt
 
 from ..utils.print_aid import print_padded, print_dict_values
-from ..utils.math_process import unique_sorted
 from ..utils.demodulate import get_symbols, get_constellation
 from ..utils.encode import ldpc_encode_bits, ldpc_make_code, scramble_bits
 from ..utils.modulate import generate_chirp, serial_to_parallel, QPSK_mapping
 from ..utils.synchronize import synchronize
 from ..utils.decode import ldpc_decode_blocks
-from ..utils.io_interface import get_bits_from_file, get_bits_from_str, u40_to_bits_msb
+from ..utils.io_interface import get_bits_from_file, get_bits_from_str, num_to_bits_msb
 from ..utils.plot import (plot_correlation, plot_received_signal, plot_original_constellations,
                           plot_corrected_constellations, plot_data_constellations, plot_unwrap_phase_fitting,
                           plot_impulse_response, plot_snr_over_time, plot_snr_over_subcarrier, plot_pre_post_ber)
@@ -58,14 +56,6 @@ def _build_ofdm_maps(ofdm_idx_blocks: np.ndarray) -> tuple[dict, dict, int]:
         ofdm_to_flat_idx[int(o)] = idx
     return ofdm_to_blocks, ofdm_to_flat_idx, B
 
-def _blocks_ready_mask(llr_global_mask_flat: np.ndarray, Ncw: int, num_blocks: int) -> np.ndarray:
-    """每块 Ncw 个比特，块就绪=其 Ncw 位均已有有效 LLR。"""
-    ready = np.empty(num_blocks, dtype=bool)
-    for b in range(num_blocks):
-        s = b * Ncw
-        e = s + Ncw
-        ready[b] = np.all(llr_global_mask_flat[s:e])
-    return ready
 
 def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
     """
@@ -85,35 +75,18 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
     chirp_len       = args.chirp_len
     chirp_l         = args.chirp_l
     chirp_h         = args.chirp_h
-    data_start      = args.data_start
-    data_tail       = args.data_tail
+    clockwise       = args.clockwise
+
+    # comb pilot settings
     INTERVAL        = args.INTERVAL
     comb_seed_base  = args.COMB_PILOT_SEED_BASE
 
+    # groundtruth settings
     groundtruth     = args.groundtruth
     tx_file_path    = getattr(args, "tx_file_path", None)
+
+    # other settings
     head_bit        = args.head_bit
-
-    # modulate
-    clockwise       = args.clockwise
-    scr_seed        = args.scrambler_seed
-    scr_mode        = args.scrambler_mode
-    scr_bitwidth    = args.scrambler_bitwidth
-
-    # LDPC
-    ldpc_standard   = args.ldpc_standard
-    ldpc_rate       = args.ldpc_rate
-    ldpc_z          = args.ldpc_z
-    ldpc_ptype      = args.ldpc_ptype
-    ldpc_device     = args.ldpc_device
-    ldpc_llr_clip   = args.ldpc_llr_clip
-    ldpc_max_iter   = args.ldpc_max_iter
-    ldpc_verbose    = args.ldpc_verbose
-    ldpc_log_every  = args.ldpc_log_every
-    ldpc_check_every= args.ldpc_check_every
-    ldpc_microbatch = args.ldpc_microbatch
-    ldpc_batch      = args.ldpc_batch
-    ldpc_print_iter = args.ldpc_print_iter
 
     # PLOT
     plot            = args.plot
@@ -126,15 +99,39 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
 
     symbol_len = N + cp_len
     POS_BINS   = np.arange(1, N//2)
-    DATA_BINS  = POS_BINS[data_start:-data_tail]
+    DATA_BINS  = POS_BINS[args.data_start:-args.data_tail]
     Nd         = DATA_BINS.size
 
     code = ldpc_make_code(
-        standard=ldpc_standard, rate=ldpc_rate, z=ldpc_z, ptype=ldpc_ptype,
-        device=ldpc_device, llr_clip=ldpc_llr_clip, max_iter=ldpc_max_iter,
-        verbose=ldpc_verbose, log_every=ldpc_log_every, check_every=ldpc_check_every,
-        microbatch=ldpc_microbatch, print_iter=ldpc_print_iter
+        standard=args.ldpc_standard, rate=args.ldpc_rate, z=args.ldpc_z, ptype=args.ldpc_ptype,
+        device=args.ldpc_device, llr_clip=args.ldpc_llr_clip, max_iter=args.ldpc_max_iter,
+        verbose=args.ldpc_verbose, log_every=args.ldpc_log_every, check_every=args.ldpc_check_every,
+        microbatch=args.ldpc_microbatch, print_iter=args.ldpc_print_iter
     )
+
+    # ---------------- Groundtruth数据准备 ----------------
+    if groundtruth:
+        assert tx_file_path is not None, "groundtruth=True 需要提供 --tx_file_path"
+        print(f"use groundtruth, tx_file_path: {tx_file_path}")
+        gt_bits_raw = get_bits_from_file(tx_file_path)
+        if args.type_bit_w:
+            tail = tx_file_path.split('.')[-1]
+            type_bit = get_bits_from_str(args.suffix_map[tail])
+            assert int(type_bit.size) == args.type_bit_w, f"type suffix cannot use {args.type_bit_w} bits to express"
+        else:
+            type_bit = np.array([])
+        size_bit = num_to_bits_msb(int(gt_bits_raw.size), bit_num=args.size_bit_w)
+        if head_bit:
+            gt_bits_raw = np.concatenate([type_bit, size_bit, gt_bits_raw])
+        if args.use_scrambler:
+            gt_bits_scr = scramble_bits(gt_bits_raw,
+                                        seed=args.scrambler_seed,
+                                        mode=args.scrambler_mode,
+                                        bit_width=args.scrambler_bitwidth)
+            gt_bits_ldpc, _ = ldpc_encode_bits(gt_bits_scr, c=code)
+        else:
+            gt_bits_ldpc, _ = ldpc_encode_bits(gt_bits_raw, c=code)
+        const_data_global_ref = QPSK_mapping(serial_to_parallel(gt_bits_ldpc, N=(Nd + 1) * 2))
 
     # ---------------- 0) 时域同步（scipy.signal.correlate） ----------------
     if print_flag: print_padded("begin to synchronize", print_len, print_pad)
@@ -144,6 +141,8 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
         plot_correlation(corr=corr,
                          axvline_dict={'chirp_start':chirp_start+chirp_tpl.size-1,
                                        'ofdm_start':ofdm_start+chirp_tpl.size-1})
+    if plot and plot_opt['received_signal']:
+        plot_received_signal(rx, ofdm_start, num_pilot, N, cp_len)
     if print_flag: print_padded("synchronize done", print_len, print_pad)
 
     # ---------------- 1) 前导 pilot：H(f) 与漂移/基准估计 + 质量评估 ----------------
@@ -202,142 +201,22 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
 
     # ---------------- 2) 数据段切片 ----------------
     rx_data_td = rx[ofdm_start + num_pilot * (N + cp_len):]
+    rx_data_td /= np.max(np.abs(rx_data_td))
     symbols_all_td = get_symbols(rx_data_td, N=N, cp_len=cp_len)        # [M_guess, N]
-    M_guess = symbols_all_td.shape[0]
-    # M_guess = 215
+    M_try = min(int(symbols_all_td.shape[0] * getattr(args, 'first_try_portion', 0.5)),
+                estimate_M_from_filesize(filesize_bytes=code.K * args.ldpc_batch // 8,
+                                         K=code.K, Ncw=code.N, Nd=Nd,
+                                         modulation_bits=2,interval=INTERVAL)
+                )
 
-    if head_bit:
-        if print_flag: print_padded("begin to analyze file head", print_len, print_pad)
-        assert args.size_bit_w + args.type_bit_w == head_bit
-        # ---------------- 3) 先解出 64-bit 头所需的最小数据 ----------------
-        #   64bit 头定义： type_bit + size_bit
-        T = estimate_M_from_filesize(filesize_bytes=head_bit // 8, K=code.K, Ncw=code.N, Nd=Nd, modulation_bits=2,
-                                     interval=INTERVAL)
-        T = min(T, M_guess)                     # 防越界
-        if INTERVAL is not None:
-            T = max(T, INTERVAL + 1)
-
-        idx_T = np.arange(T)
-        pilot_pos_T = idx_T[(idx_T % (INTERVAL + 1)) == INTERVAL] if INTERVAL is not None else np.array([])  # comb 位置
-        data_pos_T = idx_T[(idx_T % (INTERVAL + 1)) != INTERVAL] if INTERVAL is not None else idx_T          # 数据符号位置
-
-        # comb 参考与 H(f)
-        n_comb_T = pilot_pos_T.size
-        if n_comb_T:
-            pilot_ref_comb_fd_T = np.stack(
-                [generate_comb_pilot_symbol(N, comb_seed_base + i) for i in range(n_comb_T)],
-                axis=0
-            ).reshape(-1, N)[:, DATA_BINS]
-            symbols_comb_T_td = symbols_all_td[pilot_pos_T]
-            Hf_comb_T = evaluate_H_f(symbols_comb_T_td, pilot_ref_comb_fd_T, DATA_BINS)
-
-            # 段构建（质量加权的“前导最后一块 + 最近 comb”）
-            _, seg_T = build_segments_from_pilots(
-                H_start=Hf_pilot[-1], Hf_comb=Hf_comb_T, pilot_pos=pilot_pos_T, M=T, fs=fs,
-                DATA_BINS=DATA_BINS, q_comb=None, mode="quality_distance",
-                symbol_len=symbol_len, N=N, delta_global=delta0, phi_global=phi0,
-                symbols_comb_td=symbols_comb_T_td, pilot_ref_comb_fd=pilot_ref_comb_fd_T
-            )
-
-            # 外推 H_used（两路 + 权重融合）
-            H_used_from_start_T = correct_H_f(
-                origin_H_f=seg_T["H_start_per_seg"], index=seg_T["dt_from_start_per_sym"], N=N, symbol_len=symbol_len,
-                delta=seg_T["delta_per_seg"], fixed_phase_shift_factor=seg_T["phi_per_seg"])
-            H_used_from_near_T  = correct_H_f(
-                origin_H_f=seg_T["H_near_per_sym"], index=seg_T["dt_from_near_per_sym"], N=N, symbol_len=symbol_len,
-                delta=seg_T["delta_per_seg_per_sym"], fixed_phase_shift_factor=seg_T["phi_per_seg_per_sym"])
-
-            w1_T, w2_T = seg_T["w1_per_sym"], seg_T["w2_per_sym"]
-            H_used_T = (H_used_from_start_T * w1_T[:, None] + H_used_from_near_T * w2_T[:, None]) / (w1_T[:, None] + w2_T[:, None] + 1e-12)
-        else:
-            H_used_T = correct_H_f(origin_H_f=Hf_pilot[-1], N=N, symbol_len=symbol_len,
-                                   delta=delta0, fixed_phase_shift_factor=phi0,
-                                   index=data_pos_T).reshape(-1,N)
-
-
-        # 取数据符号，均衡 -> PLL（门限由 pll_snr_median 提供）
-        sym_data_T_td = symbols_all_td[data_pos_T].reshape(-1,N)
-        const_zf_T = get_constellation(sym_data_T_td, H_used_T, DATA_BINS=DATA_BINS)
-        pll_snr_med_T = pll_snr_median(const_zf_T)
-        const_pll_T = apply_cpe_pll_sequence(
-            const_zf_T, pll_snr_med_T,
-            alpha=getattr(args, "pll_alpha", 0.15),
-            snr_th_db=getattr(args, "pll_snr_th_db", 6.0),
-            alpha_min=getattr(args, "pll_alpha_min", 0.05),
-            alpha_max=getattr(args, "pll_alpha_max", 0.50),
-            snr_th_min_db=getattr(args, "pll_snr_min_db", 3.0),
-            snr_th_max_db=getattr(args, "pll_snr_max_db", 10.0),
-            beta=getattr(args, "pll_beta", 0.9),
-            snr_mid_db=getattr(args, "pll_snr_mid_db", 6.0),
-            snr_scale=getattr(args, "pll_snr_scale", 4.0),
-        )
-        # 噪声/收缩
-        sigmas_T = robust_sigma(const_pll_T, per_sc=args.sig_trk_per_sc)
-        Habs2_T = np.abs(H_used_T[:, DATA_BINS])**2
-        const_mmse_T = mmse_shrinkage(const_pll_T, Habs2_T, sigmas_T)
-
-        # LLR + 按 per-SC SNR(dB) 缩放
-        llr_raw_T, stat_T = llr_from_constellation(const_mmse_T, llr_clip=ldpc_llr_clip, clockwise=clockwise)
-        scale_sc_T = llr_scale_by_snr(stat_T["snr_db_per_sc"], lo=2.0, hi=10.0, min_scale=0.4, max_scale=1.0)
-        llr_scaled_T = (llr_raw_T.reshape(-1, Nd, 2) * scale_sc_T[:, :, None]).reshape(-1, Nd*2)
-
-        # 打包 LLR（形状需一致）
-        ofdm_idx_T = np.repeat(data_pos_T[:, None], Nd*2, axis=1)
-        freq_axis_full = np.linspace(0.0, fs, N, endpoint=False)
-        sub_carr_freq_T = np.repeat(np.repeat(freq_axis_full[DATA_BINS], 2)[None, :], data_pos_T.size, axis=0)
-        llr_blocks_T = pack_llr_blocks(ofdm_idx=ofdm_idx_T, sub_carr_freq=sub_carr_freq_T, llr=llr_scaled_T, Ncw=code.N)
-
-        # 解出头若干 codeword
-        decoded_head_scr, it_head, _, _, _ = ldpc_decode_blocks(
-            llr_blocks=llr_blocks_T,
-            code=code,
-            groundtruth_bits=None,
-            batch=ldpc_batch
-        )
-        # 头 64 bit 定义在“解码后再扰码”的比特流上
-        if args.use_scrambler:
-            decoded_head_raw = scramble_bits(decoded_head_scr, seed=scr_seed, mode=scr_mode, bit_width=scr_bitwidth)
-        else:
-            decoded_head_raw = decoded_head_scr
-
-        file_bits = 0
-        size_bit = decoded_head_raw[args.type_bit_w: args.head_bit]
-        for b in size_bit:
-            file_bits = (file_bits << 1) | int(b)
-        file_bytes = int(np.ceil(file_bits / 8.0))
-
-        # 用 64bit 头推断总 OFDM 数（含 comb）
-        M_total = estimate_M_from_filesize(filesize_bytes=file_bytes, K=code.K, Ncw=code.N, Nd=Nd, modulation_bits=2,
-                                           interval=INTERVAL)
-        if print_flag: print_padded("file head analysis done", print_len, print_pad)
-
-
-    M_total = int(min(M_total, M_guess)) if head_bit else M_guess
-    if print_flag: print_padded(f"decoded file head, {M_total} effective OFDM symbols", print_len, print_pad)
-    if plot and plot_opt['received_signal']:
-        plot_received_signal(rx, ofdm_start, num_pilot, N, cp_len, M_total)
-
-    # ---------------- 4) 基于 M_total 的完整处理 ----------------
-    # Groundtruth
-    if groundtruth:
-        assert tx_file_path is not None, "groundtruth=True 需要提供 --tx_file_path"
-        print(f"use groundtruth, tx_file_path: {tx_file_path}")
-        gt_bits_raw = get_bits_from_file(tx_file_path)
-        tail = tx_file_path.split('.')[-1]
-        type_bit = get_bits_from_str(args.suffix_map[tail])
-        size_bit = u40_to_bits_msb(int(gt_bits_raw.size))
-        if head_bit:
-            gt_bits_raw = np.concatenate([type_bit, size_bit, gt_bits_raw])
-        if args.use_scrambler:
-            gt_bits_scr = scramble_bits(gt_bits_raw, seed=scr_seed, mode=scr_mode, bit_width=scr_bitwidth)
-            gt_bits_ldpc, _ = ldpc_encode_bits(gt_bits_scr, c=code)
-        else:
-            gt_bits_ldpc, _ = ldpc_encode_bits(gt_bits_raw, c=code)
-        const_data_global_ref = QPSK_mapping(serial_to_parallel(gt_bits_ldpc, N=(Nd + 1) * 2))
-
-    all_idx = np.arange(M_total)
+    # ---------------- 3) First Try Parameter----------------
+    head_decoded_done = False
+    blk_num_head = np.ceil(head_bit/code.K).astype(int)
+    M = M_try
+    all_idx = np.arange(M_try)
     pilot_pos_global = all_idx[(all_idx % (INTERVAL + 1)) == INTERVAL] if INTERVAL is not None else np.zeros(0)
     data_pos_global = all_idx[(all_idx % (INTERVAL + 1)) != INTERVAL] if INTERVAL is not None else all_idx
+    if print_flag: print_padded(f"first try to solve {M_try} OFDM symbols", print_len, print_pad)
 
 
     max_pseudo_iter = getattr(args, "pseudo_pilot_max_iter", 20)
@@ -345,31 +224,30 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
 
     iter_pseudo = 0
     circle_flag = True
-    pilot_pos = pilot_pos_global.copy()
+    pilot_pos = pilot_pos_global.copy() if args.use_comb else np.array([])
     data_pos = data_pos_global.copy()
     # ===== 全局 ofdm/频率索引 与 LLR 缓冲（行=OFDM in data_pos_global, 列=Nd*2） =====
-    T_global = data_pos_global.size
+    ofdm_full = symbols_all_td.shape[0]
+    ofdm_idx_full = np.arange(ofdm_full)
+    data_full = ofdm_idx_full[(ofdm_idx_full % (INTERVAL + 1)) != INTERVAL] if INTERVAL is not None else ofdm_idx_full
     freq_axis_full = np.linspace(0.0, fs, N, endpoint=False)
-    ofdm_idx_global = np.repeat(data_pos_global[:, None], Nd * 2, axis=1)
-    sc_freq_global = np.repeat(np.repeat(freq_axis_full[DATA_BINS], 2)[None, :], T_global, axis=0)
-    llr_global = np.full((T_global, Nd * 2), np.nan, dtype=np.float32)
+    ofdm_idx_global = np.repeat(data_full[:, None], Nd * 2, axis=1)
+    sc_freq_global = np.repeat(np.repeat(freq_axis_full[DATA_BINS], 2)[None, :], data_full.shape[0], axis=0)
+    llr_global = np.full((data_full.shape[0], Nd * 2), np.nan, dtype=np.float32)
     # 用“占位 LLR”pack一次，得到稳定的块划分与 ofdm→块 的映射
     _packed0 = pack_llr_blocks(ofdm_idx_global, sc_freq_global, np.nan_to_num(llr_global, nan=0.0), Ncw=code.N)
     ofdm2blk, ofdm2flat, num_blocks = _build_ofdm_maps(_packed0['ofdm_idx'])
-    block_done = np.zeros(num_blocks, dtype=bool)  # 已通过 LDPC 的块
-    info_blocks = np.full((num_blocks, code.K), -1, dtype=np.int8)  # 每块信息比特缓存（-1=未知）
+    block_done = np.zeros(num_blocks, dtype=bool)  # 已通过 LDPC 的块  在解出head后需要截断
+    info_blocks = np.full((num_blocks, code.K), -1, dtype=np.int8)  # 每块信息比特缓存（-1=未知） 在解出head后需要截断
     pos2ref = {}
 
     # comb 参考(按 DATA_BINS 截断为 Nd 列，以适配 evaluate_H_f(..., DATA_BINS))
-    pilot_ref_comb_fd_global_full = np.stack(
+    pilot_ref_comb_fd_global = np.stack(
         [generate_comb_pilot_symbol(N, comb_seed_base + i) for i in range(pilot_pos_global.size)], axis=0
-    ) if pilot_pos_global.size else np.zeros((0, N), complex)
-    pilot_ref_comb_fd_global = pilot_ref_comb_fd_global_full[:, DATA_BINS] \
-        if pilot_pos_global.size else np.zeros((0, Nd), complex)
+    ).reshape(-1,N)[:, DATA_BINS] if pilot_pos_global.size and args.use_comb else np.zeros((0, Nd), complex)
     pilot_ref_comb_fd = pilot_ref_comb_fd_global.copy()
-    if not args.use_comb:
-        pilot_pos = np.array([])
 
+    # ---------------- 4) Pseudo pilot solving----------------
     while circle_flag and (iter_pseudo < max_pseudo_iter):
         n_comb = pilot_pos.size
         symbols_comb_td = (symbols_all_td[pilot_pos] if n_comb else np.zeros((0, N), complex))
@@ -378,9 +256,11 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
         # 段构建
         pilot_pred_param, seg = build_segments_from_pilots(
             H_start=Hf_pilot[-1], Hf_comb=Hf_comb, pilot_pos=pilot_pos, data_pos=data_pos,
-            M=M_total, DATA_BINS=DATA_BINS, q_comb=None, mode="quality_distance",
+            M=M, DATA_BINS=DATA_BINS, q_comb=None, mode="quality_distance",
             symbol_len=symbol_len, N=N, fs=fs, delta_global=delta0, phi_global=phi0,
-            symbols_comb_td=symbols_comb_td, pilot_ref_comb_fd=pilot_ref_comb_fd
+            symbols_comb_td=symbols_comb_td, pilot_ref_comb_fd=pilot_ref_comb_fd,
+            interp_mode=args.interp_mode, interp_smooth=args.interp_smooth,
+            interp_plot=plot_opt['freq_offset_interpolate'] and plot
         )
 
         comb_metrics = (analyze_pilots(
@@ -451,7 +331,7 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
 
 
         # LLR + 按 per-SC SNR(dB) 缩放
-        llr_raw, stat = llr_from_constellation(const_mmse, llr_clip=ldpc_llr_clip)
+        llr_raw, stat = llr_from_constellation(const_mmse, llr_clip=args.ldpc_llr_clip)
         scale_sc = llr_scale_by_snr(stat["snr_db_per_sc"], lo=2.0, hi=10.0, min_scale=0.4, max_scale=1.0)
         llr_scaled = (llr_raw.reshape(-1, Nd, 2) * scale_sc[:, :, None]).reshape(-1, Nd*2)
 
@@ -472,7 +352,7 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
 
         # 计算每块“就绪”掩码：块内 Ncw 个比特均已填充（非 NaN）
         mask_flat = np.isfinite(llr_global.reshape(-1))
-        num_blocks = llr_blocks_all.shape[0]
+        num_blocks = llr_blocks_all.shape[0] if not head_decoded_done else block_done.size
         block_ready = np.empty(num_blocks, dtype=bool)
         for b in range(num_blocks):
             s = b * code.N
@@ -490,7 +370,7 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
                 llr_blocks=llr_blocks,
                 code=code,
                 groundtruth_bits=None,
-                batch=ldpc_batch
+                batch=args.ldpc_batch
             )
             decoded_info_part = decoded_info_part.reshape(-1, code.K)
             syn = syn.flatten()
@@ -499,6 +379,44 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
             info_blocks[to_decode] = decoded_info_part
         else:
             syn = np.array([], dtype=int)
+
+        if np.all(block_done[:blk_num_head]) and not head_decoded_done:
+            # head 所需的blk全部通过校验，head decoded done
+            head_decoded_done = True
+            if args.use_scrambler:
+                decoded_head_raw = scramble_bits(info_blocks[:blk_num_head].ravel(),
+                                                 seed=args.scrambler_seed,
+                                                 mode=args.scrambler_mode,
+                                                 bit_width=args.scrambler_bitwidth)
+            else:
+                decoded_head_raw = info_blocks[:blk_num_head].ravel()
+
+            file_bits = 0
+            size_bit = decoded_head_raw[args.type_bit_w: args.head_bit]
+            for b in size_bit:
+                file_bits = (file_bits << 1) | int(b)
+            file_bytes = int(np.ceil(file_bits / 8.0))
+            M = estimate_M_from_filesize(filesize_bytes=file_bytes, K=code.K, Ncw=code.N, Nd=Nd,
+                                         modulation_bits=2, interval=INTERVAL)
+            if print_flag: print_padded(f"decoded file head, {M} effective OFDM symbols", print_len, print_pad)
+            # 用读取的文件头修正全局量
+            all_idx = np.arange(M)
+            pilot_pos_global = all_idx[(all_idx % (INTERVAL + 1)) == INTERVAL] if INTERVAL is not None else np.zeros(0)
+            data_pos_global = all_idx[(all_idx % (INTERVAL + 1)) != INTERVAL] if INTERVAL is not None else all_idx
+
+            ofdm_idx_global = ofdm_idx_global[:data_pos_global.shape[0], :]
+            sc_freq_global = sc_freq_global[:data_pos_global.shape[0],:]
+            llr_global = llr_global[:data_pos_global.shape[0],:]
+            _packed0 = pack_llr_blocks(ofdm_idx_global, sc_freq_global, np.nan_to_num(llr_global, nan=0.0), Ncw=code.N)
+            ofdm2blk, ofdm2flat, num_blocks = _build_ofdm_maps(_packed0['ofdm_idx'])
+            block_done = block_done[: num_blocks]
+            info_blocks = info_blocks[: num_blocks]
+            data_pos = data_pos_global.copy()
+            pilot_pos = pilot_pos_global.copy() if args.use_comb else np.array([])
+            pilot_ref_comb_fd_global = np.stack(
+                [generate_comb_pilot_symbol(N, comb_seed_base + i) for i in range(pilot_pos_global.size)], axis=0
+            ).reshape(-1, N)[:, DATA_BINS] if pilot_pos_global.size and args.use_comb else np.zeros((0, Nd), complex)
+
 
         if print_flag or args.iter_verbose:
             nz = int(np.count_nonzero(syn != 0)) if syn.size else 0
@@ -534,9 +452,8 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
             break
 
         # 下一轮 pilot
-        pilot_pos = choose_next_pilots(data_pos=data_pos,
-                                       available_pilots=np.array(promotable),
-                                       edge_expand_k=getattr(args, "edge_expand", 2))
+        pilot_pos = choose_next_pilots(data_pos=data_pos, edge_expand_k=getattr(args, "edge_expand", 2),
+                                       available_pilots=np.union1d(np.array(promotable), pilot_pos))
 
         # 1) 原 comb 导频参考（Nd 列）
         if pilot_pos_global.size:
@@ -550,7 +467,6 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
             info_all = info_blocks.copy()
             info_all[info_all < 0] = 0
             info_flat = info_all.reshape(-1).astype(np.int8)
-            # bits_scr_hat = scramble_bits(info_flat, seed=scr_seed, mode=scr_mode, bit_width=scr_bitwidth)
             bits_ldpc_hat, _ = ldpc_encode_bits(info_flat, c=code)  # 长度 = num_blocks * code.N
 
             for o in promotable:
@@ -573,12 +489,16 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
 
     # 与发端一致：收端解码后再加扰，得到最终位流（含 64bit 头）
     if args.use_scrambler:
-        decoded_bits_raw = scramble_bits(info_blocks.flatten(), seed=scr_seed, mode=scr_mode, bit_width=scr_bitwidth).ravel()
+        decoded_bits_raw = scramble_bits(info_blocks.flatten(),
+                                         seed=args.scrambler_seed,
+                                         mode=args.scrambler_mode,
+                                         bit_width=args.scrambler_bitwidth).ravel()
     else:
         decoded_bits_raw = info_blocks.ravel()
     if groundtruth and plot and plot_opt['BER_show']:
+        blk_bit_len = gt_bits_raw.size//code.K*code.K
         post_ber_per_blk = np.mean(
-            decoded_bits_raw[:gt_bits_raw.size//code.K*code.K].reshape(-1, code.K) != gt_bits_raw[:gt_bits_raw.size//code.K*code.K].reshape(-1, code.K),
+            decoded_bits_raw[:blk_bit_len].reshape(-1, code.K) != gt_bits_raw[:blk_bit_len].reshape(-1, code.K),
             axis=1
         )
         plot_pre_post_ber(post_ber=post_ber_per_blk)
@@ -595,7 +515,7 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
     if groundtruth:
         post_ber = np.mean(decoded_bits_raw != gt_bits_raw[head_bit:])
     info = {
-        "M": int(M_total),
+        "M": int(M),
         "ldpc_iter": iter_pseudo,
         "post_ber": post_ber if groundtruth else None,
         'type_suffix': type_str if getattr(args, 'type_bit_w', 0) else None

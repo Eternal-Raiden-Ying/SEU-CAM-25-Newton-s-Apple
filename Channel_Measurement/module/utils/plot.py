@@ -312,10 +312,11 @@ def plot_corrected_constellations(symbols_td, origin_H_f, pilot, symbol_len, del
     plt.tight_layout()
     plt.show()
 
-def plot_received_signal(rx, ofdm_start, num_symbols, N, cp_len, M):
+def plot_received_signal(rx, ofdm_start, num_symbols, N, cp_len, M: int | None=None):
     plt.plot(rx)
     plt.axvline(ofdm_start, linestyle='dotted', color='red')
-    plt.axvline(ofdm_start + (num_symbols+M) * (N+cp_len), linestyle='dotted', color='red')
+    if M is not None:
+        plt.axvline(ofdm_start + (num_symbols+M) * (N+cp_len), linestyle='dotted', color='red')
     plt.axvline(ofdm_start + num_symbols * (N + cp_len), linestyle='dotted', color='red')
     plt.show()
 
