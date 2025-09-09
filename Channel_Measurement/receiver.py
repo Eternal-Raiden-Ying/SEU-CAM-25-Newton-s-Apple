@@ -18,8 +18,10 @@ if __name__ == "__main__":
         if not os.path.exists(dir_name):
             os.makedirs(dir_name)
 
-    rx_pth = r"D:\Documents\Coding\Python\SEUCAM\Channel_Measurement\record\temp\success\[smy]received_tiff_chirp_l2_10_24k_fs48k_N8192_cp1024_S8same_R1-2_Z81_802.11n_A_no_scrambler_0.05-0.8_head_no_comb_1.npy"
-    pilot_pth = r'D:\Documents\Coding\Python\SEUCAM\Channel_Measurement\record\pilot\pilot_8same_N8192_seed256.npy'
+    rx_pth = os.path.join("record", "LDPC",
+                          "[smy]tiff_front0.05_later_0.2_nocombed_recorded_signals_1.npy")
+    pilot_pth = os.path.join("save", "pilot", "pilot_different_N8192_same_fixed.npy")
+    tx_file_path = os.path.join("data", "answer.tiff")
 
     plot_opt = {
         'correlation':                      False,
@@ -27,8 +29,8 @@ if __name__ == "__main__":
         'raw_pilot_constellation':          False,
         'corrected_pilot_constellation':    False,
         'data_constellation':               True,
-        'unwrap':                           True,
-        'received_signal':                  True,
+        'unwrap':                           False,
+        'received_signal':                  False,
         'BER_show':                         True,
         'snr_time_pilot':                   False,  # 导频阶段的平均 SNR(随符号)曲线
         'snr_time_comb':                    False,
