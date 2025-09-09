@@ -6,7 +6,7 @@ from module.receiver.receiver_develop import receiver as receiver_dev
 from module.receiver.receiver_oop_dev import receiver as receiver_oop
 
 
-project_dir = r"D:\Documents\Coding\Python\SEUCAM"
+project_dir = r"D:\Pycharm\SEU-CAM-25-Newton-s-Apple"
 output_dir = os.path.join(project_dir, "Channel_Measurement/output/ldpc")
 record_dir = os.path.join(project_dir, "Channel_Measurement/record")
 data_dir = os.path.join(project_dir, "Channel_Measurement/data")
@@ -18,22 +18,24 @@ if __name__ == "__main__":
         if not os.path.exists(dir_name):
             os.makedirs(dir_name)
 
-    rx_pth = r"D:\Documents\Coding\Python\SEUCAM\Channel_Measurement\record\temp\[smy]received_tiff_chirp_l2_10_24k_fs48k_N8192_cp1024_S8same_R1-2_Z81_802.11n_A_random256_front_0.8_head_no_comb_1.npy"
-    pilot_pth = r'D:\Documents\Coding\Python\SEUCAM\Channel_Measurement\record\pilot\pilot_8same_N8192_seed256.npy'
+    rx_pth = os.path.join("record", "LDPC",
+                          "[gyh]received_tiff_chirp_l2_10_24k_fs48k_N8192_cp1024_S8same_R1-2_Z81_802.11n_A_random256_front_0.8_head_no_1.npy")
+    pilot_pth = os.path.join("save", "pilot", "pilot_different_N8192_same_fixed.npy")
+    tx_file_path = os.path.join("data", "answer.tiff")
 
     plot_opt = {
-        'correlation':                      False,
-        'impulse_response':                 False,
-        'raw_pilot_constellation':          False,
-        'corrected_pilot_constellation':    False,
+        'correlation':                      True,
+        'impulse_response':                 True,
+        'raw_pilot_constellation':          True,
+        'corrected_pilot_constellation':    True,
         'data_constellation':               True,
-        'unwrap':                           False,
-        'received_signal':                  False,
+        'unwrap':                           True,
+        'received_signal':                  True,
         'BER_show':                         True,
-        'snr_time_pilot':                   False,  # 导频阶段的平均 SNR(随符号)曲线
-        'snr_time_comb':                    False,
-        'snr_time_data':                    False,  # 数据阶段（判决导向统计）的 SNR(随符号)曲线
-        'snr_over_sc':                      False,  # 跨子载波的平均 SNR 曲线 (data symbol)
+        'snr_time_pilot':                   True,  # 导频阶段的平均 SNR(随符号)曲线
+        'snr_time_comb':                    True,
+        'snr_time_data':                    True,  # 数据阶段（判决导向统计）的 SNR(随符号)曲线
+        'snr_over_sc':                      True,  # 跨子载波的平均 SNR 曲线 (data symbol)
     }
 
     args = argparse.Namespace(
@@ -46,7 +48,7 @@ if __name__ == "__main__":
         INTERVAL=None, COMB_PILOT_SEED_BASE=128,
         # groundtruth
         groundtruth=True, head_bit=64,
-        tx_file_path=r"D:\Documents\Coding\Python\SEUCAM\Channel_Measurement\data\answer.tiff",
+        tx_file_path=tx_file_path,
         # scrambler param
         scrambler_seed=256, scrambler_mode='random', scrambler_bitwidth=None, clockwise=False,
         # ldpc param
@@ -76,6 +78,6 @@ if __name__ == "__main__":
         print(f"post_ber: {info['post_ber']}")
 
     bytes = np.packbits(decoded_info.flatten())
-    with open(output_dir + "/unknown_0.tiff", 'wb') as file:
+    with open(output_dir + "/unknown_1.tiff", 'wb') as file:
         file.write(bytes.tobytes())
 

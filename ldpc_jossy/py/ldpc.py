@@ -24,9 +24,9 @@ class code:
         self.K = self.Nv - self.Nc
 
         # load C library (ctypes) once per instance
-        # self._load_clib()
+        self._load_clib()
         # 在 __init__ 的结尾处加入
-        self.print_iter = getattr(self, 'print_iter', False)  # 置 True 时，decode 每次调用都会打印内部迭代次数
+        self.print_iter = True  # 置 True 时，decode 每次调用都会打印内部迭代次数
 
         # DGL/CUDA 相关可调参数（可在外部覆盖）
         self.dgl_device = getattr(self, 'dgl_device', 'cuda')
@@ -664,7 +664,6 @@ class code:
         B = ch.shape[0]
         micro = int(self.dgl_microbatch) if (self.dgl_microbatch or 0) > 0 else B
         app_out = np.zeros((B, self.Nv), dtype=np.float64)
-        syn_out = np.zeros((B,1), dtype=np.int32)
         last_iters = 0
 
         for s in range(0, B, micro):
@@ -732,14 +731,14 @@ class code:
                         break
 
             last_iters = iters
-            app_np = g.nodes['var'].data['Lpost'].detach().to(torch.float32).t().cpu().numpy().astype(np.float64)  # (b,N)
+            app_np = g.nodes['var'].data['Lpost'].detach().to(torch.float32).t().cpu().numpy().astype(
+                np.float64)  # (b,N)
             app_out[s:e] = app_np
-            syn_out[s:e] = syn_sum.cpu().numpy().reshape(-1,1).astype(np.int32)
 
         if was_1d:
-            return app_out[0], int(last_iters), syn_out[0]
+            return app_out[0], int(last_iters)
         else:
-            return app_out, int(last_iters), syn_out
+            return app_out, int(last_iters)
 
     def decode(self, ch, dectype='sumprod2', corr_factor=0.7):
         """
@@ -752,10 +751,10 @@ class code:
 
         # --- DGL GPU branch (early exit) ---
         if dectype == 'sumprod2_dgl':
-            app, iters, syn = self._decode_sumprod2_dgl(ch)
+            app, iters = self._decode_sumprod2_dgl(ch)
             if getattr(self, 'print_iter', False):
                 print(f"[LDPC][DGL] iters={iters}")
-            return app, iters, syn
+            return app, iters
 
         # ===== CPU/C backend path =====
         if ch.ndim != 1:
