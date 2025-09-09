@@ -174,8 +174,8 @@ def estimate_drift_and_origin(Hf_seq: np.ndarray, *, N: int, symbol_len: int, re
     h_std = np.std(h_abs, axis=0)
     mask = np.where(h_abs < h_mean[:None] + h_std[:None], 1, 0)
     w = np.where(mask, mask.shape[0]/np.sum(mask, axis=0), 0)
-    origin = np.average(origin, axis=0,weights=w)
-    # origin = np.average(origin, axis=0)
+    # origin = np.average(origin, axis=0,weights=w)
+    origin = np.average(origin, axis=0)
 
     if mode == 'total':
         ratio = np.mean(H[1:]/H[:-1], axis=0)

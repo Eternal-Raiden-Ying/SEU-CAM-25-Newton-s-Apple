@@ -11,7 +11,7 @@ from ..utils.encode import ldpc_encode_bits, ldpc_make_code, scramble_bits
 from ..utils.modulate import generate_chirp, serial_to_parallel, QPSK_mapping
 from ..utils.synchronize import synchronize
 from ..utils.decode import ldpc_decode_blocks
-from ..utils.io_interface import get_bits_from_file
+from ..utils.io_interface import get_bits_from_file, get_bits_from_str, u40_to_bits_msb
 from ..utils.plot import (plot_correlation, plot_received_signal, plot_original_constellations,
                           plot_corrected_constellations, plot_data_constellations, plot_unwrap_phase_fitting,
                           plot_impulse_response, plot_snr_over_time, plot_snr_over_subcarrier, plot_pre_post_ber)
@@ -205,14 +205,12 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
     symbols_all_td = get_symbols(rx_data_td, N=N, cp_len=cp_len)        # [M_guess, N]
     M_guess = symbols_all_td.shape[0]
     # M_guess = 215
-    file_bits = 0
 
     if head_bit:
         if print_flag: print_padded("begin to analyze file head", print_len, print_pad)
-
+        assert args.size_bit_w + args.type_bit_w == head_bit
         # ---------------- 3) 先解出 64-bit 头所需的最小数据 ----------------
-        #   64bit 头定义：LDPC 解码后的信息比特，再通过 scrambler 的前 64 bit。
-        #   先构造 LDPC 码，决定需要多少 ofdm 数据符号（考虑 comb）
+        #   64bit 头定义： type_bit + size_bit
         T = estimate_M_from_filesize(filesize_bytes=head_bit // 8, K=code.K, Ncw=code.N, Nd=Nd, modulation_bits=2,
                                      interval=INTERVAL)
         T = min(T, M_guess)                     # 防越界
@@ -290,16 +288,21 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
         llr_blocks_T = pack_llr_blocks(ofdm_idx=ofdm_idx_T, sub_carr_freq=sub_carr_freq_T, llr=llr_scaled_T, Ncw=code.N)
 
         # 解出头若干 codeword
-        decoded_head, it_head, _, _, _ = ldpc_decode_blocks(
+        decoded_head_scr, it_head, _, _, _ = ldpc_decode_blocks(
             llr_blocks=llr_blocks_T,
             code=code,
             groundtruth_bits=None,
             batch=ldpc_batch
         )
         # 头 64 bit 定义在“解码后再扰码”的比特流上
-        decoded_head_scr = scramble_bits(decoded_head, seed=scr_seed, mode=scr_mode, bit_width=scr_bitwidth)
-        head64 = decoded_head_scr[:head_bit]
-        for b in head64:
+        if args.use_scrambler:
+            decoded_head_raw = scramble_bits(decoded_head_scr, seed=scr_seed, mode=scr_mode, bit_width=scr_bitwidth)
+        else:
+            decoded_head_raw = decoded_head_scr
+
+        file_bits = 0
+        size_bit = decoded_head_raw[args.type_bit_w: args.head_bit]
+        for b in size_bit:
             file_bits = (file_bits << 1) | int(b)
         file_bytes = int(np.ceil(file_bits / 8.0))
 
@@ -310,7 +313,7 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
 
 
     M_total = int(min(M_total, M_guess)) if head_bit else M_guess
-    if print_flag: print_padded(f"decoded file head, OFDM symbols {M_total}", print_len, print_pad)
+    if print_flag: print_padded(f"decoded file head, {M_total} effective OFDM symbols", print_len, print_pad)
     if plot and plot_opt['received_signal']:
         plot_received_signal(rx, ofdm_start, num_pilot, N, cp_len, M_total)
 
@@ -320,10 +323,16 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
         assert tx_file_path is not None, "groundtruth=True 需要提供 --tx_file_path"
         print(f"use groundtruth, tx_file_path: {tx_file_path}")
         gt_bits_raw = get_bits_from_file(tx_file_path)
+        tail = tx_file_path.split('.')[-1]
+        type_bit = get_bits_from_str(args.suffix_map[tail])
+        size_bit = u40_to_bits_msb(int(gt_bits_raw.size))
         if head_bit:
-            gt_bits_raw = np.concatenate([head64, gt_bits_raw])
-        gt_bits_scr = scramble_bits(gt_bits_raw, seed=scr_seed, mode=scr_mode, bit_width=scr_bitwidth)
-        gt_bits_ldpc, _ = ldpc_encode_bits(gt_bits_scr, c=code)
+            gt_bits_raw = np.concatenate([type_bit, size_bit, gt_bits_raw])
+        if args.use_scrambler:
+            gt_bits_scr = scramble_bits(gt_bits_raw, seed=scr_seed, mode=scr_mode, bit_width=scr_bitwidth)
+            gt_bits_ldpc, _ = ldpc_encode_bits(gt_bits_scr, c=code)
+        else:
+            gt_bits_ldpc, _ = ldpc_encode_bits(gt_bits_raw, c=code)
         const_data_global_ref = QPSK_mapping(serial_to_parallel(gt_bits_ldpc, N=(Nd + 1) * 2))
 
     all_idx = np.arange(M_total)
@@ -563,7 +572,10 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
         continue
 
     # 与发端一致：收端解码后再加扰，得到最终位流（含 64bit 头）
-    decoded_bits_raw = scramble_bits(info_blocks.flatten(), seed=scr_seed, mode=scr_mode, bit_width=scr_bitwidth).ravel()
+    if args.use_scrambler:
+        decoded_bits_raw = scramble_bits(info_blocks.flatten(), seed=scr_seed, mode=scr_mode, bit_width=scr_bitwidth).ravel()
+    else:
+        decoded_bits_raw = info_blocks.ravel()
     if groundtruth and plot and plot_opt['BER_show']:
         post_ber_per_blk = np.mean(
             decoded_bits_raw[:gt_bits_raw.size//code.K*code.K].reshape(-1, code.K) != gt_bits_raw[:gt_bits_raw.size//code.K*code.K].reshape(-1, code.K),
@@ -572,18 +584,21 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
         plot_pre_post_ber(post_ber=post_ber_per_blk)
     if head_bit:
         file_bits = 0
-        head64 = decoded_bits_raw[:head_bit]
-        for b in head64:
+        type_bit = decoded_bits_raw[:args.type_bit_w]
+        size_bit = decoded_bits_raw[args.type_bit_w: head_bit]
+        for b in size_bit:
             file_bits = (file_bits << 1) | int(b)
-        decoded_bits_scr = decoded_bits_raw[head_bit:head_bit+file_bits]
+        decoded_bits_raw = decoded_bits_raw[head_bit:head_bit+file_bits]
+        if args.type_bit_w:
+            type_bytes = np.packbits(type_bit)
+            type_str = "".join(list(map(chr, type_bytes)))
     if groundtruth:
-        post_ber = np.mean(decoded_bits_scr != gt_bits_raw[head_bit:])
+        post_ber = np.mean(decoded_bits_raw != gt_bits_raw[head_bit:])
     info = {
         "M": int(M_total),
-        "pilot_metrics": pilot_metrics,
-        "comb_metrics": comb_metrics,
         "ldpc_iter": iter_pseudo,
         "post_ber": post_ber if groundtruth else None,
+        'type_suffix': type_str if getattr(args, 'type_bit_w', 0) else None
     }
 
-    return decoded_bits_scr, info
+    return decoded_bits_raw, info

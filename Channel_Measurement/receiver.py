@@ -18,8 +18,8 @@ if __name__ == "__main__":
         if not os.path.exists(dir_name):
             os.makedirs(dir_name)
 
-    rx_pth = r"D:\Documents\Coding\Python\SEUCAM\Channel_Measurement\record\temp\success\[tzc]received_tiff_chirp_l2_10_24k_fs48k_N8192_cp1024_S8diff_R1-2_Z27_802.11n_A_random256_front_0.8_head_1.npy"
-    pilot_pth = r'D:\Documents\Coding\Python\SEUCAM\Channel_Measurement\record\pilot\pilot_8different_N8192_seed256.npy'
+    rx_pth = r"D:\Documents\Coding\Python\SEUCAM\Channel_Measurement\record\temp\signal_N8192_tiff_nocomb(1).npy"
+    pilot_pth = r'D:\Documents\Coding\Python\SEUCAM\Channel_Measurement\record\pilot\pilot_8same_N8192_seed256.npy'
 
     plot_opt = {
         'correlation':                      False,
@@ -36,21 +36,27 @@ if __name__ == "__main__":
         'snr_over_sc':                      False,  # 跨子载波的平均 SNR 曲线 (data symbol)
     }
 
+    suffix_map = {
+        "tif": "tiff",
+        "txt": "txt",
+    }
+
+
     args = argparse.Namespace(
         # basic param
         fs=48000, N=8192, cp_len=1024, num_pilot=8,
         chirp_len=2, chirp_l=10, chirp_h=24000,
         # chirp param
-        data_start=0, data_tail=819,
+        data_start=204, data_tail=819,
         # comb param
-        INTERVAL=10, COMB_PILOT_SEED_BASE=128, use_comb=True,
+        INTERVAL=None, COMB_PILOT_SEED_BASE=128, use_comb=False,
         # groundtruth
-        groundtruth=True, head_bit=64,
+        groundtruth=True, head_bit=64, size_bit_w=40, type_bit_w=24,suffix_map={v: k for k,v in suffix_map.items()},
         tx_file_path=r"D:\Documents\Coding\Python\SEUCAM\Channel_Measurement\data\answer.tiff",
         # scrambler param
-        scrambler_seed=256, scrambler_mode='random', scrambler_bitwidth=None, clockwise=False,
+        use_scrambler=False, scrambler_seed=256, scrambler_mode='random', scrambler_bitwidth=None, clockwise=False,
         # ldpc param
-        ldpc_standard="802.11n", ldpc_rate="1/2", ldpc_z=27, ldpc_ptype="A",
+        ldpc_standard="802.11n", ldpc_rate="1/2", ldpc_z=81, ldpc_ptype="A",
         ldpc_device="cuda", ldpc_llr_clip=10.0, ldpc_max_iter=200,
         ldpc_verbose=False, ldpc_log_every=1, ldpc_check_every=1,
         ldpc_microbatch=256, ldpc_batch=512, ldpc_print_iter=True,
@@ -76,6 +82,13 @@ if __name__ == "__main__":
         print(f"post_ber: {info['post_ber']}")
 
     bytes = np.packbits(decoded_info.flatten())
-    with open(output_dir + "/unknown_test.tiff", 'wb') as file:
+    if getattr(args, 'type_bit_w', 0):
+        suffix_str = suffix_map[info['type_suffix']]
+        output_filename = f'unknown.{suffix_str}'
+    else:
+        output_filename = 'unknown.tiff'
+
+    # 写入文件
+    with open(os.path.join(output_dir, output_filename), 'wb') as file:
         file.write(bytes.tobytes())
 

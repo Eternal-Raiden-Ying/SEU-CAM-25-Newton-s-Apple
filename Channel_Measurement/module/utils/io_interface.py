@@ -61,3 +61,15 @@ def save_pilot(constellations: np.ndarray, N: int, pth, filename):
     if not os.path.exists(pth):
         os.makedirs(pth)
     np.save(os.path.join(pth, filename), pilots)
+
+
+
+def u40_to_bits_msb(n: int) -> np.ndarray:
+    """
+    把整数 n 转 40bit（MSB-first）。用于“文件大小（bit数）”。
+    """
+    assert 0 <= n < (1 << 40), "payload length must fit in 40 bits"
+    b = np.zeros(40, dtype=np.uint8)
+    for k in range(40):
+        b[k] = (n >> (39 - k)) & 1
+    return b
