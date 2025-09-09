@@ -20,7 +20,7 @@ if __name__ == "__main__":
 
     rx_pth = os.path.join("record", "LDPC",
                           "[smy]tiff_front0.05_later_0.2_nocombed_recorded_signals_1.npy")
-    pilot_pth = os.path.join("save", "pilot", "pilot_different_N8192_same_fixed.npy")
+    pilot_pth = os.path.join("save", "pilot", "pilot_8different_N8192_fixed.npy")
     tx_file_path = os.path.join("data", "answer.tiff")
 
     plot_opt = {
@@ -54,7 +54,7 @@ if __name__ == "__main__":
         INTERVAL=None, COMB_PILOT_SEED_BASE=128, use_comb=False,
         # groundtruth
         groundtruth=True, head_bit=64, size_bit_w=40, type_bit_w=24,suffix_map={v: k for k,v in suffix_map.items()},
-        tx_file_path=r"D:\Documents\Coding\Python\SEUCAM\Channel_Measurement\data\answer.tiff",
+        tx_file_path=tx_file_path,
         # scrambler param
         use_scrambler=False, scrambler_seed=256, scrambler_mode='random', scrambler_bitwidth=None, clockwise=False,
         # ldpc param
