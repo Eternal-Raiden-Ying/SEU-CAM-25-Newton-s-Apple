@@ -19,23 +19,23 @@ if __name__ == "__main__":
             os.makedirs(dir_name)
 
     rx_pth = os.path.join("record", "LDPC",
-                          "[tzc]received_txt_chirp_l2_10_24k_fs48k_N8192_cp1024_S8diff_R3-4_Z27_802.11n_A_random_middle_0.8_2.npy")
-    pilot_pth = os.path.join("save", "pilot", "pilot_different_N8192_fixed.npy")
+                          "[smy]tiff_front0.05_later_0.2_nocombed_recorded_signals_1.npy")
+    pilot_pth = os.path.join("save", "pilot", "pilot_different_N8192_same_fixed.npy")
     tx_file_path = os.path.join("data", "answer.tiff")
 
     plot_opt = {
-        'correlation':                      False,
-        'impulse_response':                 False,
-        'raw_pilot_constellation':          False,
-        'corrected_pilot_constellation':    False,
+        'correlation':                      True,
+        'impulse_response':                 True,
+        'raw_pilot_constellation':          True,
+        'corrected_pilot_constellation':    True,
         'data_constellation':               True,
-        'unwrap':                           False,
-        'received_signal':                  False,
+        'unwrap':                           True,
+        'received_signal':                  True,
         'BER_show':                         True,
-        'snr_time_pilot':                   False,  # 导频阶段的平均 SNR(随符号)曲线
-        'snr_time_comb':                    False,
-        'snr_time_data':                    False,  # 数据阶段（判决导向统计）的 SNR(随符号)曲线
-        'snr_over_sc':                      False,  # 跨子载波的平均 SNR 曲线 (data symbol)
+        'snr_time_pilot':                   True,  # 导频阶段的平均 SNR(随符号)曲线
+        'snr_time_comb':                    True,
+        'snr_time_data':                    True,  # 数据阶段（判决导向统计）的 SNR(随符号)曲线
+        'snr_over_sc':                      True,  # 跨子载波的平均 SNR 曲线 (data symbol)
     }
 
     args = argparse.Namespace(
@@ -43,7 +43,7 @@ if __name__ == "__main__":
         fs=48000, N=8192, cp_len=1024, num_pilot=8,
         chirp_len=2, chirp_l=10, chirp_h=24000,
         # chirp param
-        data_start=0, data_tail=819,
+        data_start=204, data_tail=819,
         # comb param
         INTERVAL=None, COMB_PILOT_SEED_BASE=128,
         # groundtruth
@@ -78,6 +78,6 @@ if __name__ == "__main__":
         print(f"post_ber: {info['post_ber']}")
 
     bytes = np.packbits(decoded_info.flatten())
-    with open(output_dir + "/unknown_0.tiff", 'wb') as file:
+    with open(output_dir + "/unknown_1.tiff", 'wb') as file:
         file.write(bytes.tobytes())
 
