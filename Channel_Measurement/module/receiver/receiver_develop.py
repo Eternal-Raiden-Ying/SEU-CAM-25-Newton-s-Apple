@@ -204,7 +204,7 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
     rx_data_td = rx[ofdm_start + num_pilot * (N + cp_len):]
     symbols_all_td = get_symbols(rx_data_td, N=N, cp_len=cp_len)        # [M_guess, N]
     M_guess = symbols_all_td.shape[0]
-    M_guess = 215
+    # M_guess = 215
     file_bits = 0
 
     if head_bit:
@@ -298,7 +298,7 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
         )
         # 头 64 bit 定义在“解码后再扰码”的比特流上
         decoded_head_scr = scramble_bits(decoded_head, seed=scr_seed, mode=scr_mode, bit_width=scr_bitwidth)
-        head64 = decoded_head_scr[:64]
+        head64 = decoded_head_scr[:head_bit]
         for b in head64:
             file_bits = (file_bits << 1) | int(b)
         file_bytes = int(np.ceil(file_bits / 8.0))
@@ -526,7 +526,7 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
 
         # 下一轮 pilot
         pilot_pos = choose_next_pilots(data_pos=data_pos,
-                                       available_pilots=np.setdiff1d(all_idx, data_pos),
+                                       available_pilots=np.array(promotable),
                                        edge_expand_k=getattr(args, "edge_expand", 2))
 
         # 1) 原 comb 导频参考（Nd 列）
@@ -571,10 +571,11 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
         )
         plot_pre_post_ber(post_ber=post_ber_per_blk)
     if head_bit:
-        head64 = decoded_bits_raw[:64]
+        file_bits = 0
+        head64 = decoded_bits_raw[:head_bit]
         for b in head64:
             file_bits = (file_bits << 1) | int(b)
-        decoded_bits_scr = decoded_bits_raw[head_bit:gt_bits_raw.size]
+        decoded_bits_scr = decoded_bits_raw[head_bit:head_bit+file_bits]
     if groundtruth:
         post_ber = np.mean(decoded_bits_scr != gt_bits_raw[head_bit:])
     info = {

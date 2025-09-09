@@ -18,14 +18,14 @@ if __name__ == "__main__":
         if not os.path.exists(dir_name):
             os.makedirs(dir_name)
 
-    rx_pth = r"D:\Documents\Coding\Python\SEUCAM\Channel_Measurement\record\temp\[gyh]received_tiff_chirp_l2_10_24k_fs48k_N8192_cp1024_S8same_R1-2_Z81_802.11n_A_random256_front_0.8_head_comb_2.npy"
-    pilot_pth = r'D:\Documents\Coding\Python\SEUCAM\Channel_Measurement\record\pilot\pilot_8same_N8192_seed256.npy'
+    rx_pth = r"D:\Documents\Coding\Python\SEUCAM\Channel_Measurement\record\temp\success\[tzc]received_tiff_chirp_l2_10_24k_fs48k_N8192_cp1024_S8diff_R1-2_Z27_802.11n_A_random256_front_0.8_head_1.npy"
+    pilot_pth = r'D:\Documents\Coding\Python\SEUCAM\Channel_Measurement\record\pilot\pilot_8different_N8192_seed256.npy'
 
     plot_opt = {
         'correlation':                      False,
         'impulse_response':                 False,
         'raw_pilot_constellation':          False,
-        'corrected_pilot_constellation':    True,
+        'corrected_pilot_constellation':    False,
         'data_constellation':               True,
         'unwrap':                           True,
         'received_signal':                  True,
@@ -50,7 +50,7 @@ if __name__ == "__main__":
         # scrambler param
         scrambler_seed=256, scrambler_mode='random', scrambler_bitwidth=None, clockwise=False,
         # ldpc param
-        ldpc_standard="802.11n", ldpc_rate="1/2", ldpc_z=81, ldpc_ptype="A",
+        ldpc_standard="802.11n", ldpc_rate="1/2", ldpc_z=27, ldpc_ptype="A",
         ldpc_device="cuda", ldpc_llr_clip=10.0, ldpc_max_iter=200,
         ldpc_verbose=False, ldpc_log_every=1, ldpc_check_every=1,
         ldpc_microbatch=256, ldpc_batch=512, ldpc_print_iter=True,

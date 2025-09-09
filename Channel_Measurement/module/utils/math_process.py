@@ -443,7 +443,7 @@ def segment_means_on(
     if eval_idx.ndim != 1 or eval_idx.size < 2:
         raise ValueError("eval_idx must have length >= 2.")
     if not np.all(np.diff(eval_idx) > 0):
-        raise ValueError("eval_idx must be strictly increasing.")
+        raise ValueError("eval_idx must be strictly increasing.+")
 
     x_min, x_max = float(ofdm_idx[0]), float(ofdm_idx[-1])
     a = eval_idx[:-1]
