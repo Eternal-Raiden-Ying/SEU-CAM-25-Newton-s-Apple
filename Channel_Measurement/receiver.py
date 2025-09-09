@@ -18,7 +18,7 @@ if __name__ == "__main__":
         if not os.path.exists(dir_name):
             os.makedirs(dir_name)
 
-    rx_pth = r"D:\Documents\Coding\Python\SEUCAM\Channel_Measurement\record\temp\signal_N8192_tiff_nocomb(1).npy"
+    rx_pth = r"D:\Documents\Coding\Python\SEUCAM\Channel_Measurement\record\temp\success\[smy]received_tiff_chirp_l2_10_24k_fs48k_N8192_cp1024_S8same_R1-2_Z81_802.11n_A_no_scrambler_0.05-0.8_head_no_comb_1.npy"
     pilot_pth = r'D:\Documents\Coding\Python\SEUCAM\Channel_Measurement\record\pilot\pilot_8same_N8192_seed256.npy'
 
     plot_opt = {

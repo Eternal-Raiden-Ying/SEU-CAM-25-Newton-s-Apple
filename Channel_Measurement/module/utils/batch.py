@@ -436,7 +436,7 @@ def build_segments_from_pilots(H_start: np.ndarray,
     if ofdm_idx.size > 1:
         interp_freq_offset = segment_means_on(freq_offsets=freq_offsets.copy(), ofdm_idx=ofdm_idx,
                                               eval_idx=np.concatenate([np.array([-1]),all_idx]),
-                                              smoothing=0.0, extrap='spline')
+                                              smoothing=0.0, extrap='hold')
         new_deltas = 1 / (interp_freq_offset / fs + 1) - 1
 
         from matplotlib import pyplot as plt
