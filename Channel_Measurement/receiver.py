@@ -19,7 +19,7 @@ if __name__ == "__main__":
             os.makedirs(dir_name)
 
     rx_pth = os.path.join("record", "LDPC",
-                          "[gyh]received_tiff_chirp_l2_10_24k_fs48k_N8192_cp1024_S8same_R1-2_Z81_802.11n_A_random256_front_0.8_head_no_1.npy")
+                          "[smy]tiff_front0.05_later_0.2_nocombed_recorded_signals_1.npy")
     pilot_pth = os.path.join("save", "pilot", "pilot_different_N8192_same_fixed.npy")
     tx_file_path = os.path.join("data", "answer.tiff")
 
@@ -43,7 +43,7 @@ if __name__ == "__main__":
         fs=48000, N=8192, cp_len=1024, num_pilot=8,
         chirp_len=2, chirp_l=10, chirp_h=24000,
         # chirp param
-        data_start=0, data_tail=819,
+        data_start=204, data_tail=819,
         # comb param
         INTERVAL=None, COMB_PILOT_SEED_BASE=128,
         # groundtruth
