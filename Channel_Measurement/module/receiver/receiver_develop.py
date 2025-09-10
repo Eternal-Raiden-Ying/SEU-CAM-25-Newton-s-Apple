@@ -210,7 +210,6 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
                                          K=code.K, Ncw=code.N, Nd=Nd,
                                          modulation_bits=2,interval=INTERVAL)
                 )
-    M_try = 210
 
     # ---------------- 3) First Try Parameter----------------
     head_decoded_done = False

@@ -10,6 +10,7 @@ project_dir = r"D:\Documents\Coding\Python\SEUCAM"
 output_dir = os.path.join(project_dir, "Channel_Measurement/output/ldpc")
 record_dir = os.path.join(project_dir, "Channel_Measurement/record")
 data_dir = os.path.join(project_dir, "Channel_Measurement/data")
+save_dir = os.path.join(project_dir, "Channel_Measurement/save")
 
 if __name__ == "__main__":
     assert os.path.exists(project_dir), "specify your proj dir"
@@ -18,10 +19,10 @@ if __name__ == "__main__":
         if not os.path.exists(dir_name):
             os.makedirs(dir_name)
 
-    rx_pth = os.path.join("record", "LDPC", "success",
+    rx_pth = os.path.join(record_dir, "LDPC", "success",
                           "[tzc]received_tiff_chirp_l2_10_24k_fs48k_N8192_cp1024_S8same_R1-2_Z81_802.11n_A_no_scrambler_0.05-0.8_head_no_comb_4.npy")
-    pilot_pth = os.path.join("save", "pilot", "pilot_8same_N8192_fixed.npy")
-    tx_file_path = os.path.join("data", "answer.tiff")
+    pilot_pth = os.path.join(save_dir, "pilot", "pilot_8same_N8192_fixed.npy")
+    tx_file_path = os.path.join(data_dir, "answer.tiff")
     # rx_pth = r"D:\Documents\Coding\Python\SEUCAM\Channel_Measurement\test.npy"
 
     plot_opt = {
