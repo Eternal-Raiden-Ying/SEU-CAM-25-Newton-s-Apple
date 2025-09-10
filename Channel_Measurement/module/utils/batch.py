@@ -396,12 +396,11 @@ def build_segments_from_pilots(H_start: np.ndarray,
 
     # ------- 1) 组段（与之前一致） -------
     segs = []
+    valid_pilot_list = [-1]
+    H_s_list, d_list, p_list, g_list = [], [], [], []
     prev_idx = -1 if start_idx is None else start_idx
     H_ref = H_start.copy()
 
-    pb_idx = [10,43,109]
-    valid_pilot_list = [-1]
-    H_s_list, d_list, p_list, g_list = [], [], [], []
     if Hf_comb.size > 0 and pilot_pos.size > 0:
         for j, pidx in enumerate(pilot_pos):
             gap = int(pidx - prev_idx)

@@ -93,7 +93,8 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
     plot_opt        = args.plot_opt
 
     # PRINT
-    print_flag      = getattr(args, 'print_flag', False)
+    print_flag      = args.print_flag
+    print_opt       = args.print_opt
     print_len       = getattr(args, 'print_len', 64)
     print_pad       = getattr(args, 'print_pad', '-')
 
@@ -175,7 +176,8 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
         print(f"fixed_phase_shift_factor:{phi0}")
         print(f"fs of receiver - fs of emitter = {freq_bias}")
         print(f"front pilot metrics: \nindex    snr     ber")
-        print_dict_values(pilot_metrics, ["snr_db_med","ber"], [f"pilot {i}" for i in range(num_pilot)])
+        if print_opt['pilot_metric']:
+            print_dict_values(pilot_metrics, ["snr_db_med","ber"], [f"pilot {i+1}" for i in range(num_pilot)])
 
     if plot and plot_opt['impulse_response']:
         plot_impulse_response(h_t=np.fft.ifft(origin_H_f), fs=fs)
@@ -208,6 +210,7 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
                                          K=code.K, Ncw=code.N, Nd=Nd,
                                          modulation_bits=2,interval=INTERVAL)
                 )
+    M_try = 210
 
     # ---------------- 3) First Try Parameter----------------
     head_decoded_done = False
@@ -275,10 +278,12 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
         if plot and plot_opt['snr_time_comb'] and n_comb:
             plot_snr_over_time(comb_metrics["snr_db_med"], title="Comb Pilot SNR over OFDM symbols", pos=pilot_pos)
         if print_flag and n_comb:
-            print('index    delta           phi')
-            print_dict_values(pilot_pred_param, ['delta', 'phi'],[f"{i}: pilot {index}" for i, index in enumerate(pilot_pos)])
-            print('index      snr         ber')
-            print_dict_values(comb_metrics, ['snr_db_med', 'ber'],[f"{i}: pilot {index}" for i, index in enumerate(pilot_pos)])
+            if print_opt['pilot_delta']:
+                print('index    delta           phi')
+                print_dict_values(pilot_pred_param, ['delta', 'phi'],[f"{i+1}: pilot {index+1}" for i, index in enumerate(pilot_pos)])
+            if print_opt['pilot_metric']:
+                print('index      snr         ber')
+                print_dict_values(comb_metrics, ['snr_db_med', 'ber'],[f"{i+1}: pilot {index+1}" for i, index in enumerate(pilot_pos)])
 
         # 外推 H_used（两路 + 权重融合）
         H_used_from_start = correct_H_f(
@@ -318,9 +323,9 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
             const_ref = const_data_global_ref[np.where(np.isin(data_pos_global, data_pos))[0]]
             data_metrics = analyze_pilots(pilot_ref=const_ref, symbols_fd=const_mmse,DATA_BINS=np.arange(Nd),
                                           symbols_td=None, Hf=None,clockwise=clockwise, mode='data')
-            if print_flag:
+            if print_flag and print_opt['data_metric']:
                 print('index      snr         ber')
-                print_dict_values(data_metrics, ['snr_db_med', 'ber'], [f"{i}: data {index}" for i, index in enumerate(data_pos)])
+                print_dict_values(data_metrics, ['snr_db_med', 'ber'], [f"{i+1}: data {index+1}" for i, index in enumerate(data_pos)])
             if plot and plot_opt['snr_time_data']:
                 plot_snr_over_time(data_metrics["snr_db_med"], title="Data symbol SNR over OFDM symbols", pos=data_pos)
             if plot and plot_opt['data_constellation']:
@@ -418,7 +423,7 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
             ).reshape(-1, N)[:, DATA_BINS] if pilot_pos_global.size and args.use_comb else np.zeros((0, Nd), complex)
 
 
-        if print_flag or args.iter_verbose:
+        if print_flag or print_opt['iter_verbose']:
             nz = int(np.count_nonzero(syn != 0)) if syn.size else 0
             print_padded(f"[iter {iter_pseudo}] process_blocks={to_decode.size}, new_blocks={to_decode.size-nz},"
                          f" syn_nonzero={nz}, done={int(np.count_nonzero(block_done))}/{num_blocks}",
@@ -495,6 +500,7 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
                                          bit_width=args.scrambler_bitwidth).ravel()
     else:
         decoded_bits_raw = info_blocks.ravel()
+
     if groundtruth and plot and plot_opt['BER_show']:
         blk_bit_len = gt_bits_raw.size//code.K*code.K
         post_ber_per_blk = np.mean(
@@ -502,6 +508,7 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
             axis=1
         )
         plot_pre_post_ber(post_ber=post_ber_per_blk)
+
     if head_bit:
         file_bits = 0
         type_bit = decoded_bits_raw[:args.type_bit_w]
@@ -512,12 +519,12 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
         if args.type_bit_w:
             type_bytes = np.packbits(type_bit)
             type_str = "".join(list(map(chr, type_bytes)))
-    if groundtruth:
-        post_ber = np.mean(decoded_bits_raw != gt_bits_raw[head_bit:])
+
+
     info = {
         "M": int(M),
         "ldpc_iter": iter_pseudo,
-        "post_ber": post_ber if groundtruth else None,
+        "post_ber": np.mean(decoded_bits_raw != gt_bits_raw[head_bit:]) if groundtruth else None,
         'type_suffix': type_str if getattr(args, 'type_bit_w', 0) else None
     }
 

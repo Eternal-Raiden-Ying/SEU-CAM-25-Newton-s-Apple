@@ -26,10 +26,10 @@ if __name__ == "__main__":
 
     plot_opt = {
         'correlation':                      False,
-        'impulse_response':                 True,
-        'raw_pilot_constellation':          True,
-        'corrected_pilot_constellation':    True,
-        'data_constellation':               True,
+        'impulse_response':                 False,
+        'raw_pilot_constellation':          False,
+        'corrected_pilot_constellation':    False,
+        'data_constellation':               False,
         'unwrap':                           False,
         'received_signal':                  True,
         'BER_show':                         True,
@@ -40,6 +40,12 @@ if __name__ == "__main__":
         'freq_offset_interpolate':          True
     }
 
+    print_opt = {
+        'pilot_metric':                     False,
+        'pilot_delta':                      False,
+        'data_metric':                      True,
+        'iter_verbose':                     True
+    }
     suffix_map = {
         "tif": "tiff",
         "txt": "txt",
@@ -78,7 +84,7 @@ if __name__ == "__main__":
         # plot settings
         plot=True, plot_opt=plot_opt,
         # print settings
-        print_flag=True, print_len=64, print_pad='-', iter_verbose=True
+        print_flag=True, print_opt=print_opt, print_len=64, print_pad='-'
     )
     rx = np.load(rx_pth).ravel()
     pilot = np.load(pilot_pth)

@@ -328,17 +328,14 @@ def plot_data_constellations(const, const_ref, *, data_pos=None, pic_idx=None):
     if pic_idx is None:
         n_rows, n_cols, figsize = auto_constellation_map_param(num_const)
         pic_num = n_rows * n_cols
-        if pic_num > 1:
+        if pic_num < num_const:
             pic_idx = np.linspace(start=0, stop=0 + num_const // (pic_num - 1) * (pic_num - 1), num=pic_num).astype(np.int32)
         else:
-            pic_idx = np.array([0])
+            pic_idx = np.arange(num_const)
     else:
         n_rows, n_cols, figsize = auto_constellation_map_param(pic_idx.size)
-        pic_num = n_rows * n_cols
     fig, axes = plt.subplots(n_rows, n_cols, figsize=figsize)
     for i, index in enumerate(pic_idx):
-        if index >= num_const:
-            break
         if pic_idx.size > 1:
             if n_rows == 1:
                 ax = axes[i]
