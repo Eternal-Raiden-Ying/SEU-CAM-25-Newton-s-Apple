@@ -67,7 +67,7 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
         decoded_bits_scr: 最终解码后再加扰的比特流（含 64bit 头）
         info:              统计信息字典
     """
-    # ---------------- 基本参数 ----------------
+    # Basic parameter
     fs              = args.fs
     N               = args.N
     cp_len          = args.cp_len

@@ -329,7 +329,10 @@ def plot_data_constellations(const, const_ref, *, data_pos=None, pic_idx=None):
         n_rows, n_cols, figsize = auto_constellation_map_param(num_const)
         pic_num = n_rows * n_cols
         if pic_num < num_const:
-            pic_idx = np.linspace(start=0, stop=0 + num_const // (pic_num - 1) * (pic_num - 1), num=pic_num).astype(np.int32)
+            pic_idx = np.linspace(start=0,
+                                  stop=0 + (num_const-1) // (pic_num - 1) * (pic_num - 1),
+                                  num=pic_num,
+                                  endpoint=True).astype(np.int32)
         else:
             pic_idx = np.arange(num_const)
     else:

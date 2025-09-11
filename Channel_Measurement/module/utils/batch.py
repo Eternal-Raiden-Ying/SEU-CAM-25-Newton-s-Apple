@@ -139,13 +139,17 @@ def correct_H_f(origin_H_f: np.ndarray,
     return origin_H_f * linear_phase * cpe
 
 
-def estimate_drift_and_origin(Hf_seq: np.ndarray, *, N: int, symbol_len: int, return_plot_args: bool=False, mode='each'):
+def estimate_drift_and_origin(Hf_seq: np.ndarray,
+                              *, N: int, symbol_len: int, DATA_BINS: np.ndarray | None = None,
+                              return_plot_args: bool=False, mode='each'):
     """
     输入 [ns, N] 的 H(f) 序列（前导 pilot），拟合 (delta, phi_step)，并把所有 H 对齐求均值得到 origin_Hf。
     """
+    if DATA_BINS is None:
+        DATA_BINS = np.arange(N)
     H = np.asarray(Hf_seq)
     assert H.ndim == 2
-    ratios = H[1::1]/H[:-1:1]
+    ratios = H[1::1][:,DATA_BINS]/H[:-1:1][:,DATA_BINS]
     xs, phases, slopes, intercepts, deltas, phis = [], [], [], [], [0], [0]
     for ratio in ratios:
         x_auto, auto_unwrapped_phase, _ = phase_unwrap_auto(data=ratio)
@@ -169,11 +173,11 @@ def estimate_drift_and_origin(Hf_seq: np.ndarray, *, N: int, symbol_len: int, re
         ))
     origin = np.array(origin)
 
-    h_abs = np.abs(origin)
-    h_mean = np.mean(h_abs, axis=0)
-    h_std = np.std(h_abs, axis=0)
-    mask = np.where(h_abs < h_mean[:None] + h_std[:None], 1, 0)
-    w = np.where(mask, mask.shape[0]/np.sum(mask, axis=0), 0)
+    # h_abs = np.abs(origin)
+    # h_mean = np.mean(h_abs, axis=0)
+    # h_std = np.std(h_abs, axis=0)
+    # mask = np.where(h_abs < h_mean[:None] + h_std[:None], 1, 0)
+    # w = np.where(mask, mask.shape[0]/np.sum(mask, axis=0), 0)
     # origin = np.average(origin, axis=0,weights=w)
     origin = np.average(origin, axis=0)
 
@@ -217,12 +221,7 @@ def _fit_drift_between(H_start, H_end, gap, N, * ,
                        plot: bool | int = False, DATA_BINS: np.ndarray | None = None):
     """
     用两个时间点（相隔 gap 个 OFDM）的信道估计做比值，拟合得到“每 OFDM”的
-    频偏斜率 delta 以及常相位步进 phi。
-    """
-    """
-    由相隔 gap 个 OFDM 的两次信道估计，拟合得到：
-      - delta：每符号的线性相位斜率（对应 SFO/CFO 残差）
-      - phi_step：每符号公共相位步进（CPE）
+    频偏斜率 delta(SFO/CFO 残差) 以及常相位步进 phi（CPE）。
     """
     if symbol_len is None:
         raise ValueError("symbol_len must be provided")
