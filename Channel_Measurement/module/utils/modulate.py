@@ -72,7 +72,7 @@ def QPSK_mapping(data: np.ndarray,*,clockwise=False):
 
 
 def OFDM_modulate(constellations: np.ndarray, N: int, cp_len: int, *,
-                  complement_val=0, padding_clockwise=False):
+                  complement_val=0, padding_zero=False, random_tail=True):
     """
         given constellations and modulate into time signal (with cyclic prefix)
         if use comb-type pilot or block-type pilot, turn to add_pilot() first
@@ -80,6 +80,11 @@ def OFDM_modulate(constellations: np.ndarray, N: int, cp_len: int, *,
         v2: complement_val deprecated, extreme high peak due to continuous identical values,
             I just noticed that, maybe not that reason exactly, but I think constellations
             from random bits is more reasonable
+
+        v3: in order to cooperate with others, using standard below:
+            padding zero in 0 and N//2,
+            padding random bits to the tail
+
     :param constellations: just your constellations
     :param N: num of sub carrier waves
     :param cp_len: length of cyclic prefix
@@ -96,11 +101,27 @@ def OFDM_modulate(constellations: np.ndarray, N: int, cp_len: int, *,
     if num_symbols*constellation_len > constellations.size:
         print("Warning! Better make sure constellations.size is k*(N//2-1), OFDM modulate invoked")
         complement_len = int(num_symbols*constellation_len - constellations.size)
-        padding_constellations = QPSK_mapping(random_bits(2*complement_len).reshape(-1,2),clockwise=padding_clockwise)
+        if random_tail:
+            padding_constellations = QPSK_mapping(random_bits(2 * complement_len).reshape(-1, 2))
+        else:
+            padding_constellations = QPSK_mapping(np.zeros(2 * complement_len).reshape(-1, 2))
         constellations = np.concatenate([constellations.flatten(), padding_constellations])
         constellations = constellations.reshape(num_symbols, constellation_len)
-
-    symbols = np.concatenate([np.ones((num_symbols,1), dtype=np.int32), constellations, np.ones((num_symbols,1),dtype=np.int32), np.conjugate(constellations)[:,::-1]],axis=1)
+    if padding_zero:
+        symbols = np.concatenate([np.zeros((num_symbols,1), dtype=np.int32),
+                                  constellations,
+                                  np.zeros((num_symbols,1),dtype=np.int32),
+                                  np.conjugate(constellations)[:,::-1]],
+                                 axis=1
+                                 )
+    else:
+        # padding one
+        symbols = np.concatenate([np.ones((num_symbols,1), dtype=np.int32),
+                                  constellations,
+                                  np.ones((num_symbols,1),dtype=np.int32),
+                                  np.conjugate(constellations)[:,::-1]],
+                                 axis=1
+                                 )
 
     symbol_td = np.real(np.fft.ifft(symbols, axis=1))
     symbol_with_cp = np.concatenate([symbol_td[:,-cp_len:], symbol_td], axis=1)

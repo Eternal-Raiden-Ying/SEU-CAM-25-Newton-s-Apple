@@ -150,9 +150,9 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
     if print_flag: print_padded("begin to analyze front pilot", print_len, print_pad)
     rx_pilot_td = rx[ofdm_start : ofdm_start + num_pilot * (N + cp_len)]
     sym_pilot_td = get_symbols(rx_pilot_td, cp_len=cp_len, N=N)                      # [num_pilot, N] 时域
-    Hf_pilot = evaluate_H_f(sym_pilot_td, pilots_fd=pilot,)      # [num_pilot, N]
-    res_arg = estimate_drift_and_origin(Hf_pilot, N=N, symbol_len=symbol_len,
-                                        return_plot_args=plot_opt['unwrap'], mode='each')
+    Hf_pilot = evaluate_H_f(sym_pilot_td, pilots_fd=pilot)      # [num_pilot, N]
+    res_arg = estimate_drift_and_origin(Hf_pilot, N=N, symbol_len=symbol_len, DATA_BINS=DATA_BINS,
+                                        return_plot_args=plot_opt['unwrap'], mode='total')
     delta0 = np.median(res_arg[0]) if res_arg[0].size > 1 else res_arg[0]
     phi0 = np.median(res_arg[1]) if res_arg[1].size > 1 else res_arg[1]
     origin_H_f = res_arg[2]
@@ -181,7 +181,7 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
             print_dict_values(pilot_metrics, ["snr_db_med","ber"], [f"pilot {i+1}" for i in range(num_pilot)])
 
     if plot and plot_opt['impulse_response']:
-        plot_impulse_response(h_t=np.fft.ifft(origin_H_f), fs=fs)
+        plot_impulse_response(H_f=origin_H_f, fs=fs)
     if plot and plot_opt['unwrap']:
         plot_args = res_arg[3]
         plot_unwrap_phase_fitting(
@@ -204,14 +204,12 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
 
     # ---------------- 2) 数据段切片 ----------------
     rx_data_td = rx[ofdm_start + num_pilot * (N + cp_len):]
-    rx_data_td /= np.max(np.abs(rx_data_td))
     symbols_all_td = get_symbols(rx_data_td, N=N, cp_len=cp_len)        # [M_guess, N]
     M_try = min(int(symbols_all_td.shape[0] * getattr(args, 'first_try_portion', 0.8)),
                 estimate_M_from_filesize(filesize_bytes=code.K * args.ldpc_batch // 8,
                                          K=code.K, Ncw=code.N, Nd=Nd,
                                          modulation_bits=2,interval=INTERVAL)
                 )
-    M_try = 210
 
     # ---------------- 3) First Try Parameter----------------
     head_decoded_done = False
@@ -459,7 +457,8 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
 
         # 下一轮 pilot
         pilot_pos = choose_next_pilots(data_pos=data_pos, edge_expand_k=getattr(args, "edge_expand", 2),
-                                       available_pilots=np.union1d(np.array(promotable), pilot_pos))
+                                       available_pilots=np.array(promotable))
+        # np.union1d(np.array(promotable), pilot_pos)
 
         # 1) 原 comb 导频参考（Nd 列）
         if pilot_pos_global.size:

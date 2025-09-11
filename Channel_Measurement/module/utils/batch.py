@@ -86,6 +86,7 @@ def evaluate_H_f(symbols_td: np.ndarray,
       - pilots_fd : 同维度；为 None 时需提供 seeds（deprecated）
     返回与 symbols_td 对齐。
     """
+    pilots_fd = np.where(pilots_fd==0, np.nan, pilots_fd)  # disable divided by zero warning
     X = np.asarray(symbols_td)
     if X.ndim == 1:
         Yf = np.fft.fft(X)
@@ -144,15 +145,16 @@ def estimate_drift_and_origin(Hf_seq: np.ndarray,
                               return_plot_args: bool=False, mode='each'):
     """
     输入 [ns, N] 的 H(f) 序列（前导 pilot），拟合 (delta, phi_step)，并把所有 H 对齐求均值得到 origin_Hf。
+    mode ['each', 'total']
     """
     if DATA_BINS is None:
         DATA_BINS = np.arange(N)
     H = np.asarray(Hf_seq)
     assert H.ndim == 2
-    ratios = H[1::1][:,DATA_BINS]/H[:-1:1][:,DATA_BINS]
+    ratios = H[1::1]/H[:-1:1]
     xs, phases, slopes, intercepts, deltas, phis = [], [], [], [], [0], [0]
     for ratio in ratios:
-        x_auto, auto_unwrapped_phase, _ = phase_unwrap_auto(data=ratio)
+        x_auto, auto_unwrapped_phase, _ = phase_unwrap_auto(data=ratio[DATA_BINS], DATA_BINS=DATA_BINS, N=N)
         slope, intercept = fitting_line(x=x_auto, y=auto_unwrapped_phase, filter=True, residual_th=1.2)
         xs.append(x_auto.copy())
         phases.append(auto_unwrapped_phase.copy())
@@ -172,18 +174,17 @@ def estimate_drift_and_origin(Hf_seq: np.ndarray,
             fixed_phase_shift_factor=np.sum(phis[:idx+1])
         ))
     origin = np.array(origin)
-
+    origin = np.average(origin, axis=0)
     # h_abs = np.abs(origin)
     # h_mean = np.mean(h_abs, axis=0)
     # h_std = np.std(h_abs, axis=0)
     # mask = np.where(h_abs < h_mean[:None] + h_std[:None], 1, 0)
     # w = np.where(mask, mask.shape[0]/np.sum(mask, axis=0), 0)
     # origin = np.average(origin, axis=0,weights=w)
-    origin = np.average(origin, axis=0)
 
     if mode == 'total':
-        ratio = np.mean(H[1:]/H[:-1], axis=0)
-        x_auto, auto_unwrapped_phase, _ = phase_unwrap_auto(data=ratio)
+        ratio = np.mean(H[1:]/H[:-1], axis=0)[DATA_BINS]
+        x_auto, auto_unwrapped_phase, _ = phase_unwrap_auto(data=ratio, DATA_BINS=DATA_BINS, N=N)
         slope, intercept = fitting_line(x=x_auto, y=auto_unwrapped_phase, filter=True, residual_th=1.2)
         plot_args = {
             'ratio': ratio,
@@ -199,7 +200,7 @@ def estimate_drift_and_origin(Hf_seq: np.ndarray,
             return np.sum(deltas).astype(float)/(num_pilot-1), np.sum(phis).astype(float)/(num_pilot-1), origin, plot_args
     elif mode == 'each':
         plot_args = {
-            'ratio': ratios,
+            'ratio': ratios[:, DATA_BINS],
             'slope': np.array(slopes),
             'intercept': np.array(intercepts),
             'x_auto': np.array(xs),

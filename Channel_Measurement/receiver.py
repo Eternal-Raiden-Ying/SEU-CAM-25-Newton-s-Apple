@@ -19,19 +19,19 @@ if __name__ == "__main__":
         if not os.path.exists(dir_name):
             os.makedirs(dir_name)
 
-    rx_pth = os.path.join(record_dir, "LDPC", "success",
-                          "[tzc]received_tiff_chirp_l2_10_24k_fs48k_N8192_cp1024_S8same_R1-2_Z81_802.11n_A_no_scrambler_0.05-0.8_head_no_comb_4.npy")
-    pilot_pth = os.path.join(save_dir, "pilot", "pilot_8same_N8192_fixed.npy")
+    rx_pth = os.path.join(record_dir, "LDPC", "interact",
+                          "[wmh-smy]received_tiff_chirp_l2_10_24k_fs48k_N8192_cp1024_S8standard_R1-2_Z81_802.11n_A_no_scrambler_0.05-0.8_head_no_comb.npy")
+    pilot_pth = os.path.join(save_dir, "pilot", "pilot_STANDARD_freq_domain.npy")
     tx_file_path = os.path.join(data_dir, "answer.tiff")
     # rx_pth = r"D:\Documents\Coding\Python\SEUCAM\Channel_Measurement\test.npy"
 
     plot_opt = {
-        'correlation':                      False,
-        'impulse_response':                 False,
-        'raw_pilot_constellation':          False,
-        'corrected_pilot_constellation':    False,
+        'correlation':                      True,
+        'impulse_response':                 True,
+        'raw_pilot_constellation':          True,
+        'corrected_pilot_constellation':    True,
         'data_constellation':               True,
-        'unwrap':                           False,
+        'unwrap':                           True,
         'received_signal':                  False,
         'BER_show':                         True,
         'snr_time_pilot':                   False,  # 导频阶段的平均 SNR(随符号)曲线
