@@ -86,6 +86,7 @@ def evaluate_H_f(symbols_td: np.ndarray,
       - pilots_fd : 同维度；为 None 时需提供 seeds（deprecated）
     返回与 symbols_td 对齐。
     """
+    pilots_fd = np.where(pilots_fd==0, np.nan, pilots_fd)  # disable divided by zero warning
     X = np.asarray(symbols_td)
     assert pilots_fd is not None
     eps = 1e-6
@@ -142,16 +143,21 @@ def correct_H_f(origin_H_f: np.ndarray,
     return origin_H_f * linear_phase * cpe
 
 
-def estimate_drift_and_origin(Hf_seq: np.ndarray, *, N: int, symbol_len: int, return_plot_args: bool=False, mode='each'):
+def estimate_drift_and_origin(Hf_seq: np.ndarray,
+                              *, N: int, symbol_len: int, DATA_BINS: np.ndarray | None = None,
+                              return_plot_args: bool=False, mode='each'):
     """
     输入 [ns, N] 的 H(f) 序列（前导 pilot），拟合 (delta, phi_step)，并把所有 H 对齐求均值得到 origin_Hf。
+    mode ['each', 'total']
     """
+    if DATA_BINS is None:
+        DATA_BINS = np.arange(N)
     H = np.asarray(Hf_seq)
     assert H.ndim == 2
     ratios = H[1::1]/H[:-1:1]
     xs, phases, slopes, intercepts, deltas, phis = [], [], [], [], [0], [0]
     for ratio in ratios:
-        x_auto, auto_unwrapped_phase, _ = phase_unwrap_auto(data=ratio)
+        x_auto, auto_unwrapped_phase, _ = phase_unwrap_auto(data=ratio[DATA_BINS], DATA_BINS=DATA_BINS, N=N)
         slope, intercept = fitting_line(x=x_auto, y=auto_unwrapped_phase, filter=True, residual_th=1.2)
         xs.append(x_auto.copy())
         phases.append(auto_unwrapped_phase.copy())
@@ -171,18 +177,17 @@ def estimate_drift_and_origin(Hf_seq: np.ndarray, *, N: int, symbol_len: int, re
             fixed_phase_shift_factor=np.sum(phis[:idx+1])
         ))
     origin = np.array(origin)
-
-    h_abs = np.abs(origin)
-    h_mean = np.mean(h_abs, axis=0)
-    h_std = np.std(h_abs, axis=0)
-    mask = np.where(h_abs < h_mean[:None] + h_std[:None], 1, 0)
-    w = np.where(mask, mask.shape[0]/np.sum(mask, axis=0), 0)
-    # origin = np.average(origin, axis=0,weights=w)
     origin = np.average(origin, axis=0)
+    # h_abs = np.abs(origin)
+    # h_mean = np.mean(h_abs, axis=0)
+    # h_std = np.std(h_abs, axis=0)
+    # mask = np.where(h_abs < h_mean[:None] + h_std[:None], 1, 0)
+    # w = np.where(mask, mask.shape[0]/np.sum(mask, axis=0), 0)
+    # origin = np.average(origin, axis=0,weights=w)
 
     if mode == 'total':
-        ratio = np.mean(H[1:]/H[:-1], axis=0)
-        x_auto, auto_unwrapped_phase, _ = phase_unwrap_auto(data=ratio)
+        ratio = np.mean(H[1:]/H[:-1], axis=0)[DATA_BINS]
+        x_auto, auto_unwrapped_phase, _ = phase_unwrap_auto(data=ratio, DATA_BINS=DATA_BINS, N=N)
         slope, intercept = fitting_line(x=x_auto, y=auto_unwrapped_phase, filter=True, residual_th=1.2)
         plot_args = {
             'ratio': ratio,
@@ -198,7 +203,7 @@ def estimate_drift_and_origin(Hf_seq: np.ndarray, *, N: int, symbol_len: int, re
             return np.sum(deltas).astype(float)/(num_pilot-1), np.sum(phis).astype(float)/(num_pilot-1), origin, plot_args
     elif mode == 'each':
         plot_args = {
-            'ratio': ratios,
+            'ratio': ratios[:, DATA_BINS],
             'slope': np.array(slopes),
             'intercept': np.array(intercepts),
             'x_auto': np.array(xs),
@@ -220,12 +225,7 @@ def _fit_drift_between(H_start, H_end, gap, N, * ,
                        plot: bool | int = False, DATA_BINS: np.ndarray | None = None):
     """
     用两个时间点（相隔 gap 个 OFDM）的信道估计做比值，拟合得到“每 OFDM”的
-    频偏斜率 delta 以及常相位步进 phi。
-    """
-    """
-    由相隔 gap 个 OFDM 的两次信道估计，拟合得到：
-      - delta：每符号的线性相位斜率（对应 SFO/CFO 残差）
-      - phi_step：每符号公共相位步进（CPE）
+    频偏斜率 delta(SFO/CFO 残差) 以及常相位步进 phi（CPE）。
     """
     if symbol_len is None:
         raise ValueError("symbol_len must be provided")
@@ -307,7 +307,11 @@ def build_segments_from_pilots(H_start: np.ndarray,
                                pilot_ref_comb_fd: Optional[np.ndarray] = None,
                                # 权重控制
                                distance_power: float = 1.0,
-                               eps: float = 1.0) -> Tuple[Dict[str, np.ndarray], Dict[str, Optional[np.ndarray, float]]]:
+                               eps: float = 1.0,
+                               # 插值控制
+                               interp_smooth: float = 0.0,
+                               interp_mode: str = 'hold',
+                               interp_plot: bool = False) -> Tuple[Dict[str, np.ndarray], Dict[str, Optional[np.ndarray, float]]]:
     """
         构建“段（segment）级”的信道参考与漂移参数，并为每个数据 OFDM 符号给出两路参考的
         外推间隔（dt）与融合权重（w1, w2）。本函数还可在未显式提供 comb 质量 q 时，内部评估
@@ -395,12 +399,11 @@ def build_segments_from_pilots(H_start: np.ndarray,
 
     # ------- 1) 组段（与之前一致） -------
     segs = []
+    valid_pilot_list = [-1]
+    H_s_list, d_list, p_list, g_list = [], [], [], []
     prev_idx = -1 if start_idx is None else start_idx
     H_ref = H_start.copy()
 
-    pb_idx = [10,43,109]
-    valid_pilot_list = [-1]
-    H_s_list, d_list, p_list, g_list = [], [], [], []
     if Hf_comb.size > 0 and pilot_pos.size > 0:
         for j, pidx in enumerate(pilot_pos):
             gap = int(pidx - prev_idx)
@@ -439,20 +442,19 @@ def build_segments_from_pilots(H_start: np.ndarray,
     if ofdm_idx.size > 1:
         interp_freq_offset = segment_means_on(freq_offsets=freq_offsets.copy(), ofdm_idx=ofdm_idx,
                                               eval_idx=np.concatenate([np.array([-1]),all_idx]),
-                                              smoothing=0.0, extrap='hold')
+                                              smoothing=interp_smooth, extrap=interp_mode)
         new_deltas = 1 / (interp_freq_offset / fs + 1) - 1
-
-        from matplotlib import pyplot as plt
-        plt.plot(all_idx, interp_freq_offset)
-        plt.scatter(all_idx - 0.5, interp_freq_offset, marker='*', color='red', label='interpolate')
-        plt.scatter(np.arange(pilot_pos[-1] + 1) - 0.5, np.repeat(freq_offsets, np.diff(ofdm_idx)), marker='o', s=4,
-                    color='black', label='comb pilot')
-        for i in ofdm_idx:
-            plt.axvline(i, linestyle='dotted', color='black')
-        plt.axvline(M - 1, linestyle='dotted', color='black')
-        plt.legend()
-        plt.show()
-
+        if interp_plot:
+            from matplotlib import pyplot as plt
+            plt.plot(all_idx, interp_freq_offset)
+            plt.scatter(all_idx - 0.5, interp_freq_offset, marker='*', color='red', label='interpolate')
+            plt.scatter(np.arange(pilot_pos[-1] + 1) - 0.5, np.repeat(freq_offsets, np.diff(ofdm_idx)), marker='o', s=4,
+                        color='black', label='comb pilot')
+            for i in ofdm_idx:
+                plt.axvline(i, linestyle='dotted', color='black')
+            plt.axvline(M - 1, linestyle='dotted', color='black')
+            plt.legend()
+            plt.show()
     else:
         new_deltas = None
 

@@ -206,7 +206,14 @@ def plot_correlation(corr, *, axvline_dict=None):
         plt.legend()
     plt.show()
 
-def plot_impulse_response(h_t, fs,*,freq_half=True):
+def plot_impulse_response(H_f, fs,*,freq_half=True):
+    assert H_f.ndim == 1
+    N = H_f.size
+    H_f = np.where(np.isfinite(H_f), H_f, 0)
+    if H_f.size == N:
+        h_t = np.fft.ifft(H_f)
+    elif H_f.size == N//2 - 1:
+        h_t = np.fft.ifft(np.concatenate([np.zeros(1), H_f, np.zeros(1), H_f.conjugate()]))
     fig, axes = plt.subplots(1, 2, figsize=(16, 6))
     draw_in_TD(time=h_t.size / fs, signal=h_t, title='Impulse response in time domain',
                ax=axes[0], x_label='time/s', y_label='h(t)')
@@ -240,7 +247,7 @@ def plot_unwrap_phase_fitting(phase_shift, slope, intercept,
             x = np.linspace(-N // 2, N // 2, N, endpoint=False)
             phase = np.concatenate([phase_shift[i, N//2:],phase_shift[i, :N//2]])
             ax.set_title(f"{title} {i+1}")
-            ax.plot(x, np.angle(phase), color='orange', label='original', alpha=0.5)
+            ax.plot(x_auto[i], np.angle(phase), color='orange', label='original', alpha=0.5)
             ax.plot(x, slope[i] * x + intercept[i], linestyle='solid', label='fitting result', color='red')
             ax.plot(x, slope[i] * x + intercept[i] + np.pi, linestyle='dotted', color='red', alpha=0.5)
             ax.plot(x, slope[i] * x + intercept[i] - np.pi, linestyle='dotted', color='red', alpha=0.5)
@@ -312,10 +319,11 @@ def plot_corrected_constellations(symbols_td, origin_H_f, pilot, symbol_len, del
     plt.tight_layout()
     plt.show()
 
-def plot_received_signal(rx, ofdm_start, num_symbols, N, cp_len, M):
+def plot_received_signal(rx, ofdm_start, num_symbols, N, cp_len, M: int | None=None):
     plt.plot(rx)
     plt.axvline(ofdm_start, linestyle='dotted', color='red')
-    plt.axvline(ofdm_start + (num_symbols+M) * (N+cp_len), linestyle='dotted', color='red')
+    if M is not None:
+        plt.axvline(ofdm_start + (num_symbols+M) * (N+cp_len), linestyle='dotted', color='red')
     plt.axvline(ofdm_start + num_symbols * (N + cp_len), linestyle='dotted', color='red')
     plt.show()
 
@@ -327,17 +335,17 @@ def plot_data_constellations(const, const_ref, *, data_pos=None, pic_idx=None):
     if pic_idx is None:
         n_rows, n_cols, figsize = auto_constellation_map_param(num_const)
         pic_num = n_rows * n_cols
-        if pic_num > 1:
-            pic_idx = np.linspace(start=0, stop=0 + num_const // (pic_num - 1) * (pic_num - 1), num=pic_num).astype(np.int32)
+        if pic_num < num_const:
+            pic_idx = np.linspace(start=0,
+                                  stop=0 + (num_const-1) // (pic_num - 1) * (pic_num - 1),
+                                  num=pic_num,
+                                  endpoint=True).astype(np.int32)
         else:
-            pic_idx = np.array([0])
+            pic_idx = np.arange(num_const)
     else:
         n_rows, n_cols, figsize = auto_constellation_map_param(pic_idx.size)
-        pic_num = n_rows * n_cols
     fig, axes = plt.subplots(n_rows, n_cols, figsize=figsize)
     for i, index in enumerate(pic_idx):
-        if index >= num_const:
-            break
         if pic_idx.size > 1:
             if n_rows == 1:
                 ax = axes[i]
