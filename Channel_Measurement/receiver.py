@@ -1,12 +1,13 @@
 import os
 import argparse
+import soundfile as sf
 import numpy as np
 from module.receiver.receiver_scrambler_ldpc_comb_pilot_part_valid import receiver
 from module.receiver.receiver_develop import receiver as receiver_dev
 from module.receiver.receiver_oop_dev import receiver as receiver_oop
 
 
-project_dir = r"D:\Documents\Coding\Python\SEUCAM"
+project_dir = r"D:\Pycharm\SEU-CAM-25-Newton-s-Apple"
 output_dir = os.path.join(project_dir, "Channel_Measurement/output/ldpc")
 record_dir = os.path.join(project_dir, "Channel_Measurement/record")
 data_dir = os.path.join(project_dir, "Channel_Measurement/data")
@@ -19,23 +20,23 @@ if __name__ == "__main__":
             os.makedirs(dir_name)
 
     rx_pth = os.path.join("record", "LDPC",
-                          "[smy]tiff_front0.05_later_0.2_nocombed_recorded_signals_1.npy")
-    pilot_pth = os.path.join("save", "pilot", "pilot_8different_N8192_fixed.npy")
+                          "[wmh-smy]received_tiff_chirp_l2_10_24k_fs48k_N8192_cp1024_S8same_R1-2_Z81_802.11n_A_no_scrambler_0.05-0.8_head_no_comb_4.npy")
+    pilot_pth = os.path.join("save", "pilot", "wmh-pilot_STANDARD_freq_domain.npy")
     tx_file_path = os.path.join("data", "answer.tiff")
 
     plot_opt = {
-        'correlation':                      False,
-        'impulse_response':                 False,
-        'raw_pilot_constellation':          False,
-        'corrected_pilot_constellation':    False,
+        'correlation':                      True,
+        'impulse_response':                 True,
+        'raw_pilot_constellation':          True,
+        'corrected_pilot_constellation':    True,
         'data_constellation':               True,
-        'unwrap':                           False,
-        'received_signal':                  False,
+        'unwrap':                           True,
+        'received_signal':                  True,
         'BER_show':                         True,
-        'snr_time_pilot':                   False,  # 导频阶段的平均 SNR(随符号)曲线
-        'snr_time_comb':                    False,
-        'snr_time_data':                    False,  # 数据阶段（判决导向统计）的 SNR(随符号)曲线
-        'snr_over_sc':                      False,  # 跨子载波的平均 SNR 曲线 (data symbol)
+        'snr_time_pilot':                   True,  # 导频阶段的平均 SNR(随符号)曲线
+        'snr_time_comb':                    True,
+        'snr_time_data':                    True,  # 数据阶段（判决导向统计）的 SNR(随符号)曲线
+        'snr_over_sc':                      True,  # 跨子载波的平均 SNR 曲线 (data symbol)
     }
 
     suffix_map = {
@@ -53,7 +54,7 @@ if __name__ == "__main__":
         # comb param
         INTERVAL=None, COMB_PILOT_SEED_BASE=128, use_comb=False,
         # groundtruth
-        groundtruth=True, head_bit=64, size_bit_w=40, type_bit_w=24,suffix_map={v: k for k,v in suffix_map.items()},
+        groundtruth=True, head_bit=64, size_bit_w=40, type_bit_w=24, suffix_map={v: k for k,v in suffix_map.items()},
         tx_file_path=tx_file_path,
         # scrambler param
         use_scrambler=False, scrambler_seed=256, scrambler_mode='random', scrambler_bitwidth=None, clockwise=False,
@@ -76,7 +77,23 @@ if __name__ == "__main__":
         # print settings
         print_flag=True, print_len=64, print_pad='-', iter_verbose=True
     )
-    rx = np.load(rx_pth)
+
+    # ---- 加载录音文件 ----
+    if rx_pth.endswith(".wav"):
+        # wav 文件读取
+        rx_raw, sr = sf.read(rx_pth)  # sr: 采样率
+        # 如果是立体声，取第1通道；否则直接使用
+        rx = rx_raw[:, 0] if rx_raw.ndim == 2 else rx_raw
+        rx = rx.astype(np.float64)
+        print("已加载录音文件：", rx_pth)
+        print("采样率 fs =", sr)
+    elif rx_pth.endswith(".npy"):
+        # npy 文件读取
+        rx = np.load(rx_pth)  # 原本逻辑保留
+        print("已加载npy文件：", rx_pth)
+    else:
+        raise ValueError(f"不支持的文件格式: {rx_pth}")
+
     pilot = np.load(pilot_pth)
     decoded_info, info = receiver_dev(rx, pilot, args)
     print(f"ldpc iter: {info['ldpc_iter']}")
