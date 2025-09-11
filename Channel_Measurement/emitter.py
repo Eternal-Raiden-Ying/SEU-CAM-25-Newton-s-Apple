@@ -247,7 +247,7 @@ def OFDM_modulate_data(symbols, N, cp_len,front_guard_ratio=0.05, back_guard_rat
     data_matrix = symbols.reshape((num_symbols, data_bins))
 
     # 构造 freq_data
-    freq_data = np.ones((num_symbols, N), dtype=complex)
+    freq_data = np.zeros((num_symbols, N), dtype=complex)
 
     # 数据区索引（正频）：[data_lo, data_hi)
     data_lo = 1 + front_guard
@@ -340,7 +340,7 @@ def OFDM_modulate_data_with_comb(
     data_matrix = symbols.reshape((num_symbols, data_bins))
 
     # 构造 freq_data
-    freq_data = np.ones((num_symbols, N), dtype=complex)
+    freq_data = np.zeros((num_symbols, N), dtype=complex)
 
     # 数据区索引（正频）：[data_lo, data_hi)
     data_lo = 1 + front_guard
