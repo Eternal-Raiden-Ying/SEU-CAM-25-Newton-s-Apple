@@ -256,8 +256,10 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
         Hf_comb = evaluate_H_f(symbols_comb_td, pilot_ref_comb_fd, DATA_BINS) if n_comb else np.zeros((0, N), complex)
 
         # 段构建
+        H_start = (Hf_pilot[-1] / np.max(np.abs(np.nan_to_num(Hf_pilot, nan=0.0)))
+                   * np.max(np.abs(np.nan_to_num(Hf_comb.ravel(), nan=0.0)))) if n_comb else Hf_pilot[-1]
         pilot_pred_param, seg = build_segments_from_pilots(
-            H_start=Hf_pilot[-1], Hf_comb=Hf_comb, pilot_pos=pilot_pos, data_pos=data_pos,
+            H_start=H_start, Hf_comb=Hf_comb, pilot_pos=pilot_pos, data_pos=data_pos,
             M=M, DATA_BINS=DATA_BINS, q_comb=None, mode="quality_distance",
             symbol_len=symbol_len, N=N, fs=fs, delta_global=delta0, phi_global=phi0,
             symbols_comb_td=symbols_comb_td, pilot_ref_comb_fd=pilot_ref_comb_fd,
@@ -452,13 +454,16 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
 
         # 若既无新块可解码又无可晋升 OFDM，则终止
         if (len(promotable) == 0) or (data_pos.size == 0):
-            print(f"Unsolved data OFDM symbols: {data_pos.size}")
+            if data_pos.size > 10:
+                print(f"Unsolved data OFDM symbols: {data_pos.size}: {data_pos.ravel()[:10]} ...")
+            else:
+                print(f"Unsolved data OFDM symbols: {data_pos.size}: {data_pos.ravel()}")
             break
 
         # 下一轮 pilot
         pilot_pos = choose_next_pilots(data_pos=data_pos, edge_expand_k=getattr(args, "edge_expand", 2),
-                                       available_pilots=np.array(promotable))
-        # np.union1d(np.array(promotable), pilot_pos)
+                                       available_pilots=np.union1d(np.array(promotable), pilot_pos))
+        # np.union1d(np.array(promotable), pilot_pos)           np.array(promotable)
 
         # 1) 原 comb 导频参考（Nd 列）
         if pilot_pos_global.size:
