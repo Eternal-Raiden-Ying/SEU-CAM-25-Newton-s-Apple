@@ -198,6 +198,12 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
         plot_corrected_constellations(symbols_td=sym_pilot_td, origin_H_f=origin_H_f, pilot=pilot,
                                       symbol_len=symbol_len, delta=res_arg[0], fixed_phase_shift_factor=res_arg[1],
                                       DATA_BINS=DATA_BINS)
+
+    from ..utils.plot import plot_decoding_process_demo
+    plot_decoding_process_demo(symbols_td=sym_pilot_td, origin_H_f=origin_H_f, symbols_fd=pilot, DATA_BINS=DATA_BINS,
+                               symbol_len=symbol_len, delta=res_arg[0], fixed_phase_shift_factor=res_arg[1])
+
+    return np.ones(1), dict()
     if plot and plot_opt.get('snr_time_pilot', False):
         plot_snr_over_time(pilot_metrics["snr_db_med"], title="Front Pilot SNR over OFDM symbols")
     if print_flag: print_padded(f"front pilot analysis done", print_len, print_pad)

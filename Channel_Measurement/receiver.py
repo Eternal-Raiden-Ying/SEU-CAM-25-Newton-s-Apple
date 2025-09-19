@@ -19,26 +19,26 @@ if __name__ == "__main__":
         if not os.path.exists(dir_name):
             os.makedirs(dir_name)
 
-    rx_pth = os.path.join(record_dir, "LDPC", "interact",
-                          "[tzc]received_tiff_chirp_l2_10_24k_fs48k_N8192_cp1024_S8diff_R1-2_Z27_802.11n_A_random256_front_0.8_head_1.npy")
-    pilot_pth = os.path.join(save_dir, "pilot", "pilot_8different_N8192_fixed.npy")
+    rx_pth = os.path.join(record_dir, "LDPC", "success",
+                          "[tzc]received_tiff_chirp_l2_10_24k_fs48k_N8192_cp1024_S8same_R1-2_Z81_802.11n_A_no_scrambler_0.05-0.8_head_no_comb_4.npy")
+    pilot_pth = os.path.join(save_dir, "pilot", "pilot_8same_N8192_fixed.npy")
     tx_file_path = os.path.join(data_dir, "answer.tiff")
     # rx_pth = r"D:\Documents\Coding\Python\SEUCAM\Channel_Measurement\test.npy"
 
     plot_opt = {
-        'correlation':                      True,
-        'impulse_response':                 True,
-        'raw_pilot_constellation':          True,
-        'corrected_pilot_constellation':    True,
+        'correlation':                      False,
+        'impulse_response':                 False,
+        'raw_pilot_constellation':          False,
+        'corrected_pilot_constellation':    False,
         'data_constellation':               True,
-        'unwrap':                           True,
+        'unwrap':                           False,
         'received_signal':                  False,
         'BER_show':                         True,
-        'snr_time_pilot':                   True,  # 导频阶段的平均 SNR(随符号)曲线
-        'snr_time_comb':                    True,
-        'snr_time_data':                    True,  # 数据阶段（判决导向统计）的 SNR(随符号)曲线
-        'snr_over_sc':                      True,  # 跨子载波的平均 SNR 曲线 (data symbol)
-        'freq_offset_interpolate':          True
+        'snr_time_pilot':                   False,  # 导频阶段的平均 SNR(随符号)曲线
+        'snr_time_comb':                    False,
+        'snr_time_data':                    False,  # 数据阶段（判决导向统计）的 SNR(随符号)曲线
+        'snr_over_sc':                      False,  # 跨子载波的平均 SNR 曲线 (data symbol)
+        'freq_offset_interpolate':          False
     }
 
     print_opt = {
@@ -61,7 +61,7 @@ if __name__ == "__main__":
         # file type
         head_bit=64, size_bit_w=40, type_bit_w=24, suffix_map={v: k for k, v in suffix_map.items()},
         # chirp param
-        data_start=0, data_tail=819,
+        data_start=204, data_tail=819,
         # comb param
         use_comb=False, INTERVAL=None, COMB_PILOT_SEED_BASE=128,
         # pseudo pilot strategy
@@ -69,10 +69,10 @@ if __name__ == "__main__":
         # groundtruth settings
         groundtruth=True, tx_file_path=tx_file_path,
         # scrambler param
-        use_scrambler=True, scrambler_seed=256, scrambler_mode='random', scrambler_bitwidth=None,
+        use_scrambler=False, scrambler_seed=256, scrambler_mode='random', scrambler_bitwidth=None,
         # ldpc param
         ldpc_device="cuda", ldpc_batch=512,
-        ldpc_standard="802.11n", ldpc_rate="1/2", ldpc_z=27, ldpc_ptype="A", ldpc_microbatch=256,
+        ldpc_standard="802.11n", ldpc_rate="1/2", ldpc_z=81, ldpc_ptype="A", ldpc_microbatch=256,
         ldpc_llr_clip=10.0, ldpc_max_iter=200,
         ldpc_verbose=False, ldpc_print_iter=True, ldpc_log_every=1, ldpc_check_every=1,
         # CPE PLL param
@@ -89,7 +89,7 @@ if __name__ == "__main__":
         # print settings
         print_flag=True, print_opt=print_opt, print_len=64, print_pad='-'
     )
-    rx = np.load(rx_pth).ravel()[args.fs:]
+    rx = np.load(rx_pth).ravel()
     if rx.dtype == np.int16:
         rx = rx.astype(np.float32)
         rx /= np.max(np.abs(rx))

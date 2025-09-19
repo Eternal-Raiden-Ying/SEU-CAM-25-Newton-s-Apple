@@ -7,6 +7,7 @@ from matplotlib.font_manager import FontProperties
 from .math_process import normalize
 from .demodulate import get_constellation
 from .batch import correct_H_f
+from .demo_utils import animate_scatter_panels_classes, complex_normal
 
 # 设置字体对象
 ch_font = FontProperties(fname='/System/Library/Fonts/STHeiti Medium.ttc')   # 中文（Mac 示例）
@@ -416,3 +417,117 @@ def plot_pre_post_ber(post_ber: np.ndarray, *, pre_ber: np.ndarray | None = None
     plt.legend()
     plt.grid(True)
     plt.show()
+
+
+def plot_decoding_process_demo(symbols_td, origin_H_f, symbols_fd, symbol_len, delta,
+                                  fixed_phase_shift_factor, *, DATA_BINS=None):
+    num_sym, N = symbols_td.shape
+    assert symbols_td.shape == symbols_fd.shape
+    if DATA_BINS is None:
+        DATA_BINS = np.arange(N)
+
+    if isinstance(delta, np.ndarray) and delta.size > 1:
+        delta = np.concatenate(
+            [np.zeros(1), np.array([np.sum(delta[1:i + 1]) / i for i in range(1, num_sym)])],
+            axis=0
+        )
+        fixed_phase_shift_factor = np.concatenate(
+            [np.zeros(1), np.array([np.sum(fixed_phase_shift_factor[1:i + 1]) / i for i in range(1, num_sym)])],
+            axis=0
+        )
+        corrected_H_f = correct_H_f(origin_H_f=origin_H_f, N=N, index=np.arange(num_sym), symbol_len=symbol_len,
+                                    delta=delta, fixed_phase_shift_factor=fixed_phase_shift_factor)
+    else:
+        corrected_H_f = correct_H_f(origin_H_f=origin_H_f, N=N, index=np.arange(num_sym), symbol_len=symbol_len,
+                                    delta=delta, fixed_phase_shift_factor=fixed_phase_shift_factor)
+
+
+    pic_idx = np.array([5,10,20,30])
+    const_idx_used = np.array([1,3,5,7])
+    pilot_used = symbols_fd[const_idx_used][:,DATA_BINS]
+
+    def const_classify(const_recv, const_emit):
+        judge_radius = 0.5
+        red_mask = np.where(np.abs(const_emit - (1 + 1j) / np.sqrt(2)) < judge_radius)
+        green_mask = np.where(np.abs(const_emit - (-1 + 1j) / np.sqrt(2)) < judge_radius)
+        blue_mask = np.where(np.abs(const_emit - (-1 - 1j) / np.sqrt(2)) < judge_radius)
+        yellow_mask = np.where(np.abs(const_emit - (1 - 1j) / np.sqrt(2)) < judge_radius)
+        real = np.real(const_recv)
+        imag = np.imag(const_recv)
+
+        return (
+            (real[red_mask],    imag[red_mask]),
+            (real[green_mask],  imag[green_mask]),
+            (real[blue_mask],   imag[blue_mask]),
+            (real[yellow_mask], imag[yellow_mask])
+        )
+
+    def get_const(symbols_td: np.ndarray, H_used: np.ndarray, noise, *, DATA_BINS: np.ndarray) -> np.ndarray:
+        """
+        统一版等化：支持 [N]/[ns,N]。
+        返回：若输入为 [N] -> [Nd]；若 [ns,N] -> [ns,Nd]
+        """
+        Yf = np.fft.fft(symbols_td, axis=-1)
+        Xf = (Yf[..., DATA_BINS] - noise) / H_used[..., DATA_BINS]
+        return Xf
+
+    frames = []
+    noise_std = 0.2*pic_idx + 1.5
+    noise = []
+    for i in range(const_idx_used.size):
+        noise.append(complex_normal(pilot_used[0].shape, mean=0.0, var=np.square(noise_std[i])))
+    noise = np.array(noise)
+
+    fixed_phase_shift_factor = 0.0001 * pic_idx + 0.005
+    # SFO phase correction
+    SFO_frames = 100
+    for i in range(SFO_frames):
+        inverse_H = correct_H_f(origin_H_f=corrected_H_f[const_idx_used], N=N,
+                                index=-pic_idx, symbol_len=symbol_len,
+                                delta=(SFO_frames-1-i)/SFO_frames*delta, fixed_phase_shift_factor=fixed_phase_shift_factor)
+        const_before_SFO = get_const(symbols_td=symbols_td[const_idx_used,:], noise= noise,
+                                     H_used=inverse_H, DATA_BINS=DATA_BINS)
+        frame = []
+        for j in range(const_idx_used.size):
+            frame.append(const_classify(const_recv=const_before_SFO[j,:], const_emit=pilot_used[j,:]))
+        frames.append(tuple(frame))
+
+
+    # CPE correction
+    CPE_frames = 20
+    for i in range(CPE_frames):
+        inverse_H = correct_H_f(origin_H_f=corrected_H_f[const_idx_used], N=N,
+                                index=-pic_idx, symbol_len=symbol_len,
+                                delta=0, fixed_phase_shift_factor=(CPE_frames - 1 - i) / CPE_frames * fixed_phase_shift_factor)
+        const_before_CPE = get_const(symbols_td=symbols_td[const_idx_used, :], noise=noise,
+                                     H_used=inverse_H, DATA_BINS=DATA_BINS)
+        frame = []
+        for j in range(const_idx_used.size):
+            frame.append(const_classify(const_recv=const_before_CPE[j, :], const_emit=pilot_used[j, :]))
+        frames.append(tuple(frame))
+
+    # MMSE
+    MMSE_frames = 20
+    for i in range(MMSE_frames):
+        inverse_H = corrected_H_f[const_idx_used]
+        const_before_MMSE = get_const(symbols_td=symbols_td[const_idx_used, :], noise=(3*MMSE_frames - 1 - i) / (3*MMSE_frames) * noise,
+                                      H_used=inverse_H, DATA_BINS=DATA_BINS)
+        frame = []
+        for j in range(const_idx_used.size):
+            frame.append(const_classify(const_recv=const_before_MMSE[j, :], const_emit=pilot_used[j, :]))
+        frames.append(tuple(frame))
+
+    animate_scatter_panels_classes(
+        frames=frames,
+        panel_titles=tuple(f'OFDM symbol {pic_idx[i]}' for i in range(pic_idx.size)),
+        class_labels=('+1+j', '-1+j', '-1-j', '+1-j'),
+        colors=('red', 'green', 'blue', 'yellow'),
+        s=2,
+        alpha=0.6,
+        xlim=(-2,2),
+        ylim=(-2,2),
+        save_path='out.gif',
+        suptitle='decoding process (demo)',
+        n_xticks=3,
+        n_yticks=3
+    )
