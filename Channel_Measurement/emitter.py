@@ -55,12 +55,20 @@ LDPC_PTYPE = 'A'  # only used for 802.16 rate 2/3 or 3/4
 TXT_INPUT_PATH = r"D:\Pycharm\SEU-CAM-25-Newton-s-Apple\Channel_Measurement\data\shakespace_poem_middle.txt"
 TIFF_INPUT_PATH = r"D:\Pycharm\SEU-CAM-25-Newton-s-Apple\Channel_Measurement\data\answer.tiff"
 PILOT_SAVE_PATH = r"D:\Pycharm\SEU-CAM-25-Newton-s-Apple\Channel_Measurement\save\pilot\pilot_different_N8192_same.npy"
+# DATA_WAVEFORM_SAVE_PATH =r"D:\Pycharm\SEU-CAM-25-Newton-s-Apple\Channel_Measurement\save\signal\signal_N8192_tiff_nocomb.npy"
 DATA_WAVEFORM_SAVE_PATH =r"D:\Pycharm\SEU-CAM-25-Newton-s-Apple\Channel_Measurement\save\signal\signal_N8192_tiff_nocomb.npy"
 WAV_SAVE_PATH =r"D:\Pycharm\SEU-CAM-25-Newton-s-Apple\Channel_Measurement\save\signal\tx_signal_N8192_nocomb.wav"
+
 
 # ---------------------- Helpers ----------------------
 # 只用正频 90% 子载波承载数据，剩余 10% 用随机 QPSK 填充
 RANDOM_FILL_SEED = 2025  # 随机填充的种子；Tx/Rx 不需要共享（Rx会屏蔽这部分）
+
+def prepend_silence_complex(x: np.ndarray, fs: float, silence_sec: float) -> np.ndarray:
+    """x 为复数基带信号；在最前面加 silence_sec 秒的全零静音"""
+    L = int(round(fs * silence_sec))
+    pad = np.zeros(L, dtype=x.dtype if np.iscomplexobj(x) else np.complex64)
+    return np.concatenate([pad, x])
 
 def ldpc_encode_bits(in_bits,*,
                      c = None,
@@ -239,7 +247,7 @@ def OFDM_modulate_data(symbols, N, cp_len,front_guard_ratio=0.05, back_guard_rat
     data_matrix = symbols.reshape((num_symbols, data_bins))
 
     # 构造 freq_data
-    freq_data = np.ones((num_symbols, N), dtype=complex)
+    freq_data = np.zeros((num_symbols, N), dtype=complex)
 
     # 数据区索引（正频）：[data_lo, data_hi)
     data_lo = 1 + front_guard
@@ -332,7 +340,7 @@ def OFDM_modulate_data_with_comb(
     data_matrix = symbols.reshape((num_symbols, data_bins))
 
     # 构造 freq_data
-    freq_data = np.ones((num_symbols, N), dtype=complex)
+    freq_data = np.zeros((num_symbols, N), dtype=complex)
 
     # 数据区索引（正频）：[data_lo, data_hi)
     data_lo = 1 + front_guard
@@ -418,12 +426,17 @@ def generate_pilot_symbol(N, seed=256):
     imag_parts = rng.choice([-1, 1], size=half - 1)
     X_half = (real_parts + 1j * imag_parts) / np.sqrt(2)
 
+    # qpsk = rng.choice([1 + 1j, 1 - 1j, -1 + 1j, -1 - 1j], size=half - 1)
+
     X_freq = np.zeros(N, dtype=complex)
     X_freq[0] = 1
     X_freq[1:half] = X_half
+    # X_freq[1:half] = qpsk
     X_freq[half] = 1
     X_freq[half + 1:] = np.conj(X_half[::-1])
+    # X_freq[half + 1:] = np.conj(qpsk[::-1])
     return X_freq
+
 
 
 def generate_pilot_combed_symbol(N, seed=256, iterations=10, num_of_data_symbols=50, block_size=4):
@@ -551,7 +564,8 @@ def main():
     signal_cut = tx_signal_realtime.copy()
     signal_cut /= np.max(np.abs(signal_cut))
     signal_cut = np.concatenate([signal_cut, chirp_tail*chirp_cof])
-    tx_signal_realtime = signal_cut
+    # signal_cut = prepend_silence_complex(signal_cut, fs=48000, silence_sec=10)
+    tx_signal_realtime = signal_cut.copy()
     print(f"Final transmit signal length: {len(tx_signal_realtime)} samples")
     print(f"Duration: {len(tx_signal_realtime) / fs:.2f} seconds")
     # plt.figure()

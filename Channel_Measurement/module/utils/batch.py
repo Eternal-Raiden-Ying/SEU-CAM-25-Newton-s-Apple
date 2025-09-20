@@ -88,6 +88,9 @@ def evaluate_H_f(symbols_td: np.ndarray,
     """
     pilots_fd = np.where(pilots_fd==0, np.nan, pilots_fd)  # disable divided by zero warning
     X = np.asarray(symbols_td)
+    assert pilots_fd is not None
+    eps = 1e-6
+    pilots_fd = np.where(pilots_fd==0.0, eps, pilots_fd)
     if X.ndim == 1:
         Yf = np.fft.fft(X)
         if DATA_BINS is None:
