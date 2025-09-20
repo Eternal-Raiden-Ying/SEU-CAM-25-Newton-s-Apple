@@ -472,7 +472,7 @@ def plot_decoding_process_demo(symbols_td, origin_H_f, symbols_fd, symbol_len, d
         return Xf
 
     frames = []
-    noise_std = 0.2*pic_idx + 1.5
+    noise_std = 0.1*pic_idx + 2
     noise = []
     for i in range(const_idx_used.size):
         noise.append(complex_normal(pilot_used[0].shape, mean=0.0, var=np.square(noise_std[i])))
@@ -480,7 +480,7 @@ def plot_decoding_process_demo(symbols_td, origin_H_f, symbols_fd, symbol_len, d
 
     fixed_phase_shift_factor = 0.0001 * pic_idx + 0.005
     # SFO phase correction
-    SFO_frames = 100
+    SFO_frames = 200
     for i in range(SFO_frames):
         inverse_H = correct_H_f(origin_H_f=corrected_H_f[const_idx_used], N=N,
                                 index=-pic_idx, symbol_len=symbol_len,
@@ -492,9 +492,14 @@ def plot_decoding_process_demo(symbols_td, origin_H_f, symbols_fd, symbol_len, d
             frame.append(const_classify(const_recv=const_before_SFO[j,:], const_emit=pilot_used[j,:]))
         frames.append(tuple(frame))
 
+    # freeze
+    INTERVAL_frames = 20
+    for i in range(INTERVAL_frames):
+        frames.append(frame)
+
 
     # CPE correction
-    CPE_frames = 20
+    CPE_frames = 150
     for i in range(CPE_frames):
         inverse_H = correct_H_f(origin_H_f=corrected_H_f[const_idx_used], N=N,
                                 index=-pic_idx, symbol_len=symbol_len,
@@ -506,8 +511,13 @@ def plot_decoding_process_demo(symbols_td, origin_H_f, symbols_fd, symbol_len, d
             frame.append(const_classify(const_recv=const_before_CPE[j, :], const_emit=pilot_used[j, :]))
         frames.append(tuple(frame))
 
+
+    for i in range(INTERVAL_frames):
+        frames.append(frame)
+
+
     # MMSE
-    MMSE_frames = 20
+    MMSE_frames = 150
     for i in range(MMSE_frames):
         inverse_H = corrected_H_f[const_idx_used]
         const_before_MMSE = get_const(symbols_td=symbols_td[const_idx_used, :], noise=(3*MMSE_frames - 1 - i) / (3*MMSE_frames) * noise,
@@ -516,6 +526,19 @@ def plot_decoding_process_demo(symbols_td, origin_H_f, symbols_fd, symbol_len, d
         for j in range(const_idx_used.size):
             frame.append(const_classify(const_recv=const_before_MMSE[j, :], const_emit=pilot_used[j, :]))
         frames.append(tuple(frame))
+
+    for i in range(INTERVAL_frames):
+        frames.append(frame)
+
+    keywords = ['coarse-grained correct Hf with unwrap', 'fine-grained correct Hf with CPE_PLL', 'reduce noise with MMSE']
+    def caption(t):
+        if 0 <= t < SFO_frames + INTERVAL_frames:
+            return keywords[0]
+        elif SFO_frames + INTERVAL_frames <= t < CPE_frames+SFO_frames + 2*INTERVAL_frames:
+            return keywords[1]
+        else:
+            return keywords[2]
+
 
     animate_scatter_panels_classes(
         frames=frames,
@@ -528,6 +551,10 @@ def plot_decoding_process_demo(symbols_td, origin_H_f, symbols_fd, symbol_len, d
         ylim=(-2,2),
         save_path='out.gif',
         suptitle='decoding process (demo)',
-        n_xticks=3,
-        n_yticks=3
+        n_xticks=5,
+        n_yticks=5,
+        captions=caption,
+        caption_y=0.08,            # 放得更靠下
+        caption_kw={"fontsize":24, "fontweight":"bold", "color": "black"},
+        fig_size=(8,8)
     )

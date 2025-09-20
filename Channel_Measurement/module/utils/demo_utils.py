@@ -1,27 +1,67 @@
 import numpy as np
+import matplotlib as mpl
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation, PillowWriter  # MP4 可用 FFMpegWriter（需装 ffmpeg）
 
+mpl.rcParams["font.family"] = "Times New Roman"
+
+# 可选：GIF 事后量化压缩（显著减小体积）
+def _quantize_gif(path_in, path_out=None, colors=128, optimize=True, duration_ms=None):
+    try:
+        from PIL import Image, ImageSequence
+    except ImportError:
+        return  # 没装 Pillow 就跳过
+    im = Image.open(path_in)
+    frames = []
+    for fr in ImageSequence.Iterator(im):
+        # 转成自适应调色板，最多 colors 色（GIF 上限 256）
+        q = fr.convert("P", palette=Image.ADAPTIVE, colors=int(colors))
+        frames.append(q)
+    if not frames:
+        return
+    save_to = path_out or path_in
+    duration = duration_ms if duration_ms is not None else im.info.get("duration", 40)
+    frames[0].save(
+        save_to, save_all=True, append_images=frames[1:], loop=0,
+        optimize=optimize, duration=duration
+    )
+
 def animate_scatter_panels_classes(
-    frames,  # 结构：frames[t][p][c] = (x, y)；t:帧，p:面板0..3，c:类别0..3
+    frames,                                  # frames[t][p][c] = (x, y)
     panel_titles=("P1","P2","P3","P4"),
     class_labels=("Type 1","Type 2","Type 3","Type 4"),
     colors=("C0","C1","C2","C3"),
     markers=("o","o","o","o"),
     s=20, alpha=0.9,
-    xlim=None, ylim=None,            # (min,max) 或长度为4的列表
+    xlim=None, ylim=None,                    # (min,max) 或长度为4
     interval=40, fps=25,
     save_path=None, suptitle=None,
-    # —— 新增：刻度与轴线控制 ——
-    xticks=None, yticks=None,        # 刻度位置数组/列表（优先级最高）
-    n_xticks=None, n_yticks=None,    # 刻度个数（含端点；若上面未给，才会生效）
-    add_axes="lines",                # None / "lines" / "spines"
-    arrows=False                     # 是否给 0 轴加箭头（建议与 "lines" 搭配）
+    xticks=None, yticks=None,
+    n_xticks=None, n_yticks=None,
+    add_axes="lines",                        # None / "lines" / "spines"
+    arrows=False,
+
+    # —— 新增：动态字幕（动图下方关键词/短语） ——
+    captions=None,                           # None / 可迭代(长度>=1) / 可调用 f(t)->str
+    caption_y=0.02,                          # 相对图高位置（0=底部，1=顶部）
+    caption_kw=None,                         # dict，例如 {"fontsize":12,"fontweight":"bold"}
+
+    # —— 新增：体积控制 ——
+    fig_size=(16, 4),                        # 减小尺寸可显著降体积
+    dpi=80,                                 # 保存时 DPI，适当降低（如 80）
+    every_n=1,                               # 帧抽样：每隔 n 帧取一帧（例如 2 可减半）
+    gif_colors=128,                          # GIF 量化颜色数（<=256，越小越省）
+    gif_optimize=True,                       # GIF 保存后再用 Pillow 优化
 ):
+    # —— 预处理帧（抽帧） ——
     frames = list(frames)
+    if every_n > 1:
+        frames = frames[::int(every_n)]
     if not frames:
         raise ValueError("frames 不能为空。")
     T = len(frames)
+
+    # 结构校验
     for t, ft in enumerate(frames):
         if len(ft) != 4:
             raise ValueError(f"第 {t} 帧应包含 4 个子图数据。")
@@ -32,24 +72,21 @@ def animate_scatter_panels_classes(
                 if not (isinstance(pair, (tuple, list)) and len(pair) == 2):
                     raise ValueError(f"frames[{t}][{p}][{c}] 必须是 (x, y)。")
 
-    if len(panel_titles) != 4:  raise ValueError("panel_titles 必须 4 个。")
-    if len(class_labels) != 4:  raise ValueError("class_labels 必须 4 个。")
-    if len(colors) != 4:        raise ValueError("colors 必须 4 个。")
-    if len(markers) != 4:       raise ValueError("markers 必须 4 个。")
+    if len(panel_titles) != 4 or len(class_labels) != 4 or len(colors) != 4 or len(markers) != 4:
+        raise ValueError("panel_titles/class_labels/colors/markers 都必须各 4 个。")
 
     # 归一化 x/y 范围
-    def _norm_lim(lim, name):
+    def _norm_lim(lim):
         if lim is None: return None
         if isinstance(lim, (tuple, list)) and len(lim) == 2 and np.isscalar(lim[0]) and np.isscalar(lim[1]):
-            return [tuple(lim)] * 4
+            return [tuple(lim)]*4
         if isinstance(lim, (tuple, list)) and len(lim) == 4:
             return [tuple(v) if v is not None else None for v in lim]
-        raise ValueError(f"{name} 必须是 (min,max) 或 长度为4 的列表。")
+        raise ValueError("xlim/ylim 必须是 (min,max) 或 长度为4 的列表。")
 
-    xlims = _norm_lim(xlim, "xlim")
-    ylims = _norm_lim(ylim, "ylim")
+    xlims = _norm_lim(xlim)
+    ylims = _norm_lim(ylim)
 
-    # 自动按“每个面板聚合其 4 类、全部帧”的数据计算范围（仅在未提供时）
     def _auto_limits_for_panel(p, is_x=True):
         vals = []
         for t in range(T):
@@ -69,25 +106,47 @@ def animate_scatter_panels_classes(
             if xlims[p] is None: xlims[p] = _auto_limits_for_panel(p, True)
             if ylims[p] is None: ylims[p] = _auto_limits_for_panel(p, False)
 
-    # 工具：根据 lim 和 n_ticks 生成均匀刻度
     def _linspace_ticks(lim, n):
         if n is None: return None
-        n = int(n)
-        n = max(n, 2)  # 至少含端点2个
+        n = max(int(n), 2)
         return np.linspace(lim[0], lim[1], n)
 
-    fig, axes = plt.subplots(1, 4, figsize=(16, 4))
-    if suptitle: fig.suptitle(suptitle, y=0.98)
+    # —— 画布/子图；为字幕预留下边距 ——
+    fig, axes = plt.subplots(2, 2, figsize=fig_size)
+    # fig.patch.set_alpha(0)
+    fig.subplots_adjust(bottom=0.16)
+    if suptitle:
+        fig.suptitle(suptitle, y=0.98, fontsize=24, fontweight="bold")
+
+    # —— 字幕 Text Artist（随帧更新） ——
+    footer_ax = fig.add_axes([0.08, 0.0, 0.84, 0.12])  # [left,bottom,width,height] in figure coords
+    footer_ax.axis("off")
+
+    # 页脚中的字幕 Text（在页脚轴的坐标系中居中）
+    caption_obj = None
+    if captions is not None:
+        cap_style = dict(fontsize=12, ha="center", va="center")
+        if isinstance(caption_kw, dict):
+            cap_style.update(caption_kw)
+        caption_obj = footer_ax.text(0.5, 0.5, "", **cap_style)
+
+        # 小工具：取某帧字幕
+        def _get_caption(t):
+            if callable(captions):
+                return str(captions(t))
+            captions_seq = list(captions)
+            return str(captions_seq[t % len(captions_seq)])
 
     scatts = []  # [[sc_p0_c0..c3], ...]
-    for p, ax in enumerate(axes):
+    for p in range(4):
+        ax = axes[p//2, p%2]
+        # ax.set_facecolor('none')
         ax.set_title(panel_titles[p])
         ax.set_xlim(*xlims[p]); ax.set_ylim(*ylims[p])
-        ax.set_xlabel("real")
-        if p == 0: ax.set_ylabel("imag")
+        if p == 2 or p == 3: ax.set_xlabel("real", fontsize=14)
+        if p == 0 or p == 2: ax.set_ylabel("imag", fontsize=14)
 
-        # —— 统一刻度（仅初始化设置一次，动画期间不再改动） ——
-        # 优先使用显式 xticks/yticks，其次使用 n_xticks/n_yticks 均匀取点
+        # 统一刻度（仅初始化一次）
         if xticks is not None:
             ax.set_xticks(xticks)
         elif n_xticks is not None:
@@ -97,42 +156,39 @@ def animate_scatter_panels_classes(
         elif n_yticks is not None:
             ax.set_yticks(_linspace_ticks(ylims[p], n_yticks))
 
-        # —— 加 xy 轴（只做一次） ——
+        # 0 轴
         if add_axes == "lines":
-            # 过原点的横纵轴
             ax.axhline(0, linewidth=1)
             ax.axvline(0, linewidth=1)
             if arrows:
-                # 简易箭头（确保范围包含 0 才可见）
                 ax.annotate('', xy=(xlims[p][1], 0), xytext=(xlims[p][0], 0),
                             arrowprops=dict(arrowstyle='->', linewidth=1))
                 ax.annotate('', xy=(0, ylims[p][1]), xytext=(0, ylims[p][0]),
                             arrowprops=dict(arrowstyle='->', linewidth=1))
         elif add_axes == "spines":
-            # 脊柱穿过零点（范围需包含0）
             ax.spines['left'].set_position('zero')
             ax.spines['bottom'].set_position('zero')
             ax.spines['right'].set_color('none')
             ax.spines['top'].set_color('none')
             ax.xaxis.set_ticks_position('bottom')
             ax.yaxis.set_ticks_position('left')
-        # add_axes 为 None 时不做额外处理
 
         row = []
         for c in range(4):
             sc = ax.scatter([], [], s=s, c=colors[c], marker=markers[c], alpha=alpha,
-                            label=class_labels[c] if p == 0 else None)
+                            label=class_labels[c] if p == 3 else None)
             row.append(sc)
         scatts.append(row)
 
-    # 只在第一个面板放图例，避免重复
-    axes[3].legend(loc="lower right")
+    axes[1,1].legend(loc="lower right", fontsize=14)
 
     def init():
         for row in scatts:
             for sc in row:
                 sc.set_offsets(np.empty((0, 2)))
-        return tuple(sc for row in scatts for sc in row)
+        if caption_obj is not None:
+            caption_obj.set_text("")
+        return tuple(sc for row in scatts for sc in row) + ((caption_obj,) if caption_obj else ())
 
     def update(t):
         for p in range(4):
@@ -141,21 +197,30 @@ def animate_scatter_panels_classes(
                 x = np.asarray(x).ravel(); y = np.asarray(y).ravel()
                 ofs = np.empty((0, 2)) if x.size == 0 else np.column_stack([x, y])
                 scatts[p][c].set_offsets(ofs)
-        return tuple(sc for row in scatts for sc in row)
+        if caption_obj is not None:
+            caption_obj.set_text(_get_caption(t))
+        return tuple(sc for row in scatts for sc in row) + ((caption_obj,) if caption_obj else ())
 
     anim = FuncAnimation(fig, update, init_func=init, frames=T, interval=interval, blit=True)
 
     if save_path:
         if save_path.lower().endswith(".gif"):
             writer = PillowWriter(fps=fps)
+            # 注意：dpi 会显著影响体积
+            anim.save(save_path, writer=writer, dpi=dpi)
+            # 事后量化压缩（显著减小体积）
+            if gif_colors is not None or gif_optimize:
+                _quantize_gif(save_path, colors=gif_colors or 256, optimize=gif_optimize,
+                              duration_ms=int(1000/fps))
         elif save_path.lower().endswith(".mp4"):
-            from matplotlib.animation import FFMpegWriter
-            writer = FFMpegWriter(fps=fps)
+            from matplotlib.animation import FFMpegWriter   # 需系统安装 ffmpeg
+            writer = FFMpegWriter(fps=fps, codec="libx264", bitrate=None)  # H.264 通常更小更清晰
+            anim.save(save_path, writer=writer, dpi=dpi)
         else:
             raise ValueError("仅支持 .gif 或 .mp4")
-        anim.save(save_path, writer=writer)
 
     return anim
+
 
 
 
