@@ -74,8 +74,6 @@ def descrambler(bits, seed=0b1111111, bit_width=7):
 def ldpc_decode_blocks(*,
                        llr_blocks: Dict[str, np.ndarray],
                        code,
-                       groundtruth_bits: Optional[np.ndarray] = None,
-                       head_bytes: int = 0,
                        batch: int = 256,
                        dectype: str | None = None,
                        device: str = 'cuda'):
@@ -121,35 +119,43 @@ def ldpc_decode_blocks(*,
                 if code.print_iter: print(f"[Batch] BLK {s}-{e}")
                 appB, itB, synB = code.decode(ch_batch, dectype='sumprod2_dgl')  # (b, N), (b,), (b,)
             elif device == 'cpu':
-                app_list, it_tmp = [], []
+                app_list, it_tmp, syn_tmp = [], [], []
                 for i in range(ch_batch.shape[0]):
                     for iter in range(code.dgl_max_iter):
                         app_i, it_i = code.decode(ch_batch[i], dectype='sumprod2')
                         xhat = (app_i<0).astype(np.uint8)
-                        syn = np.remainder(np.matmul(code.pcmat(), xhat), 2)
+                        syn = np.sum(np.remainder(np.matmul(code.pcmat(), xhat), 2))
                         if syn==0:
                             break
+                    if code.print_iter: print(f"[LDPC][sumprod2] BLK {s + i}: iters={iter * 200 + it_i}")
                     app_list.append(app_i)
                     it_tmp.append(it_i)
+                    syn_tmp.append(syn)
                 appB = np.stack(app_list, axis=0)
                 itB = np.array(it_tmp)
+                synB = np.array(syn_tmp)
             else:
                 raise ValueError(f"unknown device {device}")
         elif dectype == 'sumprod2_dgl':
+            assert torch.cuda.is_available(), "cuda is not available"
+            if code.print_iter: print(f"[Batch] BLK {s}-{e}")
             appB, itB, synB = code.decode(ch_batch, dectype='sumprod2_dgl')
         else:
-            app_list, it_tmp = [], []
+            app_list, it_tmp, syn_tmp = [], [], []
             for i in range(ch_batch.shape[0]):
                 for iter in range(code.dgl_max_iter):
                     app_i, it_i = code.decode(ch_batch[i], dectype=dectype)
                     xhat = (app_i < 0).astype(np.uint8)
-                    syn = np.remainder(np.matmul(code.pcmat(), xhat), 2)
+                    syn = np.sum(np.remainder(np.matmul(code.pcmat(), xhat), 2))
                     if syn == 0:
                         break
+                if code.print_iter: print(f"[LDPC][{dectype}] BLK {s + i}: iters={iter * 200 + it_i}")
                 app_list.append(app_i)
                 it_tmp.append(it_i)
+                syn_tmp.append(syn)
             appB = np.stack(app_list, axis=0)
             itB = np.array(it_tmp)
+            synB = np.array(syn_tmp)
 
         it_list.append(itB)
         if synB is not None:
@@ -167,31 +173,5 @@ def ldpc_decode_blocks(*,
     if syn_list:
         syn = np.concatenate(syn_list,axis=0)
 
-    # —— BER 统计（仅当提供 groundtruth_bits 时进行）——
-    pre_ber = post_ber = None
-    if groundtruth_bits is not None and groundtruth_bits.size > 0:
-        # 解码前的“信息位硬判”流
-        pre_bits = np.concatenate(pre_info_est_chunks, axis=0).astype(np.uint8)  # (nblocks*K,)
-        post_bits = decoded_info
 
-        L = min(post_bits.size, int(groundtruth_bits.size))
-        if L > 0:
-            try:
-                gt_bits = groundtruth_bits[:L]
-                gt_cmp = gt_bits[:gt_bits.size//K*K].reshape(-1,K)
-                n_blk, K = gt_cmp.shape
-                pre_cmp = pre_bits[:n_blk*K].reshape(-1,K)
-                post_cmp = post_bits[:n_blk*K].reshape(-1,K)
-                pre_ber = np.concatenate(
-                    [np.mean(pre_cmp != gt_cmp, axis=-1),
-                     np.array(np.mean(gt_bits[n_blk*K:]!=pre_bits[n_blk*K:L]))[None]], axis=0)
-                post_ber = np.concatenate(
-                    [np.mean(post_cmp != gt_cmp, axis=-1),
-                     np.array(np.mean(gt_bits[n_blk * K:] != post_bits[n_blk * K:L]))[None]], axis=0)
-            except :
-                gt_cmp = groundtruth_bits[:L].astype(np.uint8)
-                pre_ber  = float(np.mean(pre_bits[:L] != gt_cmp))
-                post_ber = float(np.mean(post_bits[:L] != gt_cmp))
-
-
-    return decoded_info, it, pre_ber, post_ber, syn
+    return decoded_info, it, syn

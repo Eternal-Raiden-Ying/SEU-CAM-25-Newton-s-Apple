@@ -24,7 +24,7 @@ class code:
         self.K = self.Nv - self.Nc
 
         # load C library (ctypes) once per instance
-        # self._load_clib()
+        self._load_clib()
         # 在 __init__ 的结尾处加入
         self.print_iter = getattr(self, 'print_iter', False)  # 置 True 时，decode 每次调用都会打印内部迭代次数
 
@@ -754,7 +754,7 @@ class code:
         if dectype == 'sumprod2_dgl':
             app, iters, syn = self._decode_sumprod2_dgl(ch)
             if getattr(self, 'print_iter', False):
-                print(f"[LDPC][DGL] iters={iters}")
+                print(f"[LDPC][{dectype}] iters={iters}")
             return app, iters, syn
 
         # ===== CPU/C backend path =====
@@ -790,11 +790,8 @@ class code:
             it = self._clib.minsum(ch_p, vdeg_p, cdeg_p, intrlv_p, Nv, Nc, Nmsg, app_p, ct.c_double(corr_factor))
         else:
             raise NameError('Decoder type unknown')
-        # 新增：按需打印这次调用在 C 端实际迭代了多少轮
-        if getattr(self, 'print_iter', False):
-            print(f"[LDPC][{dectype}] iters={int(it)}")
 
-            return app, int(it)
+        return app, int(it)
 
     # convenience wrappers for Lxor and Lxfb
 

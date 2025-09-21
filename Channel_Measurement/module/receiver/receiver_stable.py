@@ -2,6 +2,7 @@
 from __future__ import annotations
 import numpy as np
 import argparse
+import time
 
 from ..utils.print_aid import print_padded, print_dict_values
 from ..utils.demodulate import get_symbols, get_constellation
@@ -255,6 +256,7 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
     pilot_ref_comb_fd = pilot_ref_comb_fd_global.copy()
 
     # ---------------- 4) Pseudo pilot solving----------------
+    start = time.time()
     while circle_flag and (iter_pseudo < max_pseudo_iter):
         n_comb = pilot_pos.size
         symbols_comb_td = (symbols_all_td[pilot_pos] if n_comb else np.zeros((0, N), complex))
@@ -377,10 +379,9 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
                 'ofdm_idx': ofdm_idx_blocks[to_decode],
                 'sc_freq': sc_freq_blocks[to_decode],
             }
-            decoded_info_part, it, _, _, syn = ldpc_decode_blocks(
+            decoded_info_part, it, syn = ldpc_decode_blocks(
                 llr_blocks=llr_blocks,
                 code=code,
-                groundtruth_bits=None,
                 batch=args.ldpc_batch,
                 device=args.ldpc_device
             )
@@ -502,6 +503,8 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
         # 进入下一轮
         iter_pseudo += 1
         continue
+    end = time.time()
+    print(f"耗时：{end-start:.4f}")
 
     # 与发端一致：收端解码后再加扰，得到最终位流（含 64bit 头）
     if args.use_scrambler:

@@ -3,7 +3,6 @@ import argparse
 import soundfile as sf
 import numpy as np
 from module.receiver.receiver_stable import receiver
-from module.receiver.receiver_develop import receiver as receiver_dev
 from module.receiver.receiver_oop_dev import receiver as receiver_oop
 
 
@@ -21,7 +20,7 @@ if __name__ == "__main__":
             os.makedirs(dir_name)
 
     rx_pth = os.path.join(record_dir, "LDPC", "success",
-                          "[tzc]received_tiff_chirp_l2_10_24k_fs48k_N8192_cp1024_S8same_R1-2_Z81_802.11n_A_no_scrambler_0.05-0.8_head_no_comb_4.npy")
+                          "[smy]received_tiff_chirp_l2_10_24k_fs48k_N8192_cp1024_S8same_R1-2_Z81_802.11n_A_no_scrambler_0.05-0.8_head_no_comb_1.npy")
     pilot_pth = os.path.join(save_dir, "pilot", "pilot_8same_N8192_fixed.npy")
     tx_file_path = os.path.join(data_dir, "answer.tiff")
     # rx_pth = r"D:\Documents\Coding\Python\SEUCAM\Channel_Measurement\test.npy"
@@ -52,8 +51,9 @@ if __name__ == "__main__":
     suffix_map = {
         "tif": "tiff",
         "txt": "txt",
+        "jpg": "jpg",
+        "png": "png"
     }
-
 
     args = argparse.Namespace(
         # basic param
@@ -75,7 +75,7 @@ if __name__ == "__main__":
         # ldpc param
         ldpc_device="cpu", ldpc_batch=512,
         ldpc_standard="802.11n", ldpc_rate="1/2", ldpc_z=81, ldpc_ptype="A", ldpc_microbatch=256,
-        ldpc_llr_clip=10.0, ldpc_max_iter=200,
+        ldpc_llr_clip=10.0, ldpc_max_iter=1,
         ldpc_verbose=False, ldpc_print_iter=True, ldpc_log_every=1, ldpc_check_every=1,
         # CPE PLL param
         pll_alpha=0.15, pll_beta=0.9,
@@ -87,7 +87,7 @@ if __name__ == "__main__":
         # frequency offset interpolate
         interp_mode='hold', interp_smooth=0.0,
         # plot settings
-        plot=True, plot_opt=plot_opt,
+        plot=False, plot_opt=plot_opt,
         # print settings
         print_flag=False, print_opt=print_opt, print_len=64, print_pad='-'
     )
