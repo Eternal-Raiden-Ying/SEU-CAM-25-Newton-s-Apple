@@ -73,9 +73,9 @@ if __name__ == "__main__":
         # scrambler param
         use_scrambler=False, scrambler_seed=256, scrambler_mode='random', scrambler_bitwidth=None,
         # ldpc param
-        ldpc_device="cpu", ldpc_batch=512,
+        ldpc_device="cuda", ldpc_batch=512,
         ldpc_standard="802.11n", ldpc_rate="1/2", ldpc_z=81, ldpc_ptype="A", ldpc_microbatch=256,
-        ldpc_llr_clip=10.0, ldpc_max_iter=1,
+        ldpc_llr_clip=10.0, ldpc_max_iter=100,
         ldpc_verbose=False, ldpc_print_iter=True, ldpc_log_every=1, ldpc_check_every=1,
         # CPE PLL param
         pll_alpha=0.15, pll_beta=0.9,
@@ -89,7 +89,7 @@ if __name__ == "__main__":
         # plot settings
         plot=False, plot_opt=plot_opt,
         # print settings
-        print_flag=False, print_opt=print_opt, print_len=64, print_pad='-'
+        print_flag=True, print_opt=print_opt, print_len=64, print_pad='-'
     )
 
     # ---- 加载录音文件 ----
