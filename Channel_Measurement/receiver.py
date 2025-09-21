@@ -20,26 +20,26 @@ if __name__ == "__main__":
         if not os.path.exists(dir_name):
             os.makedirs(dir_name)
 
-    rx_pth = os.path.join(record_dir, "LDPC", "interact",
-                          "[wmh-smy]received_tiff_chirp_l2_10_24k_fs48k_N8192_cp1024_S8standard_R1-2_Z81_802.11n_A_no_scrambler_0.05-0.8_head_no_comb.npy")
-    pilot_pth = os.path.join(save_dir, "pilot", "pilot_STANDARD_freq_domain.npy")
+    rx_pth = os.path.join(record_dir, "LDPC", "success",
+                          "[tzc]received_tiff_chirp_l2_10_24k_fs48k_N8192_cp1024_S8same_R1-2_Z81_802.11n_A_no_scrambler_0.05-0.8_head_no_comb_4.npy")
+    pilot_pth = os.path.join(save_dir, "pilot", "pilot_8same_N8192_fixed.npy")
     tx_file_path = os.path.join(data_dir, "answer.tiff")
     # rx_pth = r"D:\Documents\Coding\Python\SEUCAM\Channel_Measurement\test.npy"
 
     plot_opt = {
-        'correlation':                      True,
-        'impulse_response':                 True,
-        'raw_pilot_constellation':          True,
-        'corrected_pilot_constellation':    True,
+        'correlation':                      False,
+        'impulse_response':                 False,
+        'raw_pilot_constellation':          False,
+        'corrected_pilot_constellation':    False,
         'data_constellation':               True,
-        'unwrap':                           True,
+        'unwrap':                           False,
         'received_signal':                  False,
         'BER_show':                         True,
         'snr_time_pilot':                   False,  # 导频阶段的平均 SNR(随符号)曲线
         'snr_time_comb':                    False,
         'snr_time_data':                    False,  # 数据阶段（判决导向统计）的 SNR(随符号)曲线
         'snr_over_sc':                      False,  # 跨子载波的平均 SNR 曲线 (data symbol)
-        'freq_offset_interpolate':          True
+        'freq_offset_interpolate':          False
     }
 
     print_opt = {
@@ -73,7 +73,7 @@ if __name__ == "__main__":
         # scrambler param
         use_scrambler=False, scrambler_seed=256, scrambler_mode='random', scrambler_bitwidth=None,
         # ldpc param
-        ldpc_device="cuda", ldpc_batch=512,
+        ldpc_device="cpu", ldpc_batch=512,
         ldpc_standard="802.11n", ldpc_rate="1/2", ldpc_z=81, ldpc_ptype="A", ldpc_microbatch=256,
         ldpc_llr_clip=10.0, ldpc_max_iter=200,
         ldpc_verbose=False, ldpc_print_iter=True, ldpc_log_every=1, ldpc_check_every=1,
@@ -89,7 +89,7 @@ if __name__ == "__main__":
         # plot settings
         plot=True, plot_opt=plot_opt,
         # print settings
-        print_flag=True, print_opt=print_opt, print_len=64, print_pad='-'
+        print_flag=False, print_opt=print_opt, print_len=64, print_pad='-'
     )
 
     # ---- 加载录音文件 ----
@@ -103,7 +103,9 @@ if __name__ == "__main__":
         print("采样率 fs =", sr)
     elif rx_pth.endswith(".npy"):
         # npy 文件读取
-        rx = np.load(rx_pth)  # 原本逻辑保留
+        rx = np.load(rx_pth).ravel()  # 原本逻辑保留
+        if rx.dtype == np.int16:
+            rx /= np.max(np.abs(rx))
         print("已加载npy文件：", rx_pth)
     else:
         raise ValueError(f"不支持的文件格式: {rx_pth}")
