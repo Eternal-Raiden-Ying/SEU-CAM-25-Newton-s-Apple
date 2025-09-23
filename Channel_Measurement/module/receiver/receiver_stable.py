@@ -14,6 +14,7 @@ from ..utils.io_interface import get_bits_from_file, get_bits_from_str, num_to_b
 from ..utils.plot import (plot_correlation, plot_received_signal, plot_original_constellations,
                           plot_corrected_constellations, plot_data_constellations, plot_unwrap_phase_fitting,
                           plot_impulse_response, plot_snr_over_time, plot_snr_over_subcarrier, plot_pre_post_ber)
+from ..utils.DeltaInterpolator import DeltaInterpolator
 
 # 待归类函数
 from ..utils.batch import (
@@ -111,6 +112,8 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
         microbatch=args.ldpc_microbatch, print_iter=args.ldpc_print_iter
     )
 
+    delta_interpolator = DeltaInterpolator(fs=fs, method=args.interp_mode, smooth=args.interp_smooth)
+
     # ---------------- Groundtruth数据准备 ----------------
     if groundtruth:
         assert tx_file_path is not None, "groundtruth=True 需要提供 --tx_file_path"
@@ -153,13 +156,19 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
     sym_pilot_td = get_symbols(rx_pilot_td, cp_len=cp_len, N=N)                      # [num_pilot, N] 时域
     Hf_pilot = evaluate_H_f(sym_pilot_td, pilots_fd=pilot)      # [num_pilot, N]
     res_arg = estimate_drift_and_origin(Hf_pilot, N=N, symbol_len=symbol_len, DATA_BINS=DATA_BINS,
-                                        return_plot_args=plot_opt['unwrap'], mode='total')
+                                        return_plot_args=plot_opt['unwrap'], mode='each')
     delta0 = np.median(res_arg[0]) if res_arg[0].size > 1 else res_arg[0]
     phi0 = np.median(res_arg[1]) if res_arg[1].size > 1 else res_arg[1]
     origin_H_f = res_arg[2]
     freq_bias = fs / (delta0 + 1) - fs
 
     if isinstance(res_arg[0], np.ndarray) and res_arg[0].size > 1:
+        delta_interpolator.update(
+            idx_s=np.linspace(-num_pilot, -1, num_pilot-1).astype(int),
+            idx_e=np.linspace(-num_pilot+1, 0, num_pilot-1).astype(int),
+            delta=res_arg[0][1:]
+        )
+        delta_interp_start = -num_pilot
         pilot_metrics = analyze_pilots(
             symbols_td=sym_pilot_td, pilot_ref=pilot, DATA_BINS=DATA_BINS, mode="front", clockwise=clockwise,
             Hf=correct_H_f(origin_H_f=origin_H_f, N=N, index=np.arange(num_pilot), symbol_len=symbol_len,
@@ -167,6 +176,8 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
                            fixed_phase_shift_factor=np.concatenate([np.zeros(1), np.array([np.sum(res_arg[1][1:i+1])/i for i in range(1,num_pilot)])], axis=0))
         )
     else:
+        delta_interpolator.update(-1,0,res_arg[0])
+        delta_interp_start = -1
         pilot_metrics = analyze_pilots(
             symbols_td=sym_pilot_td, pilot_ref=pilot, DATA_BINS=DATA_BINS, mode="front", clockwise=clockwise,
             Hf=correct_H_f(origin_H_f=origin_H_f, N=N, index=np.arange(num_pilot), symbol_len=symbol_len,
@@ -224,6 +235,7 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
     all_idx = np.arange(M_try)
     pilot_pos_global = all_idx[(all_idx % (INTERVAL + 1)) == INTERVAL] if INTERVAL is not None else np.zeros(0)
     data_pos_global = all_idx[(all_idx % (INTERVAL + 1)) != INTERVAL] if INTERVAL is not None else all_idx
+    delta_interpolator.set_params(node_pos=np.linspace(delta_interp_start, M-1, M+np.abs(delta_interp_start)).astype(int))
     if print_flag: print_padded(f"first try to solve {M_try} OFDM symbols", print_len, print_pad)
 
 
@@ -270,8 +282,7 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
             M=M, DATA_BINS=DATA_BINS, q_comb=None, mode="quality_distance",
             symbol_len=symbol_len, N=N, fs=fs, delta_global=delta0, phi_global=phi0,
             symbols_comb_td=symbols_comb_td, pilot_ref_comb_fd=pilot_ref_comb_fd,
-            interp_mode=args.interp_mode, interp_smooth=args.interp_smooth,
-            interp_plot=plot_opt['freq_offset_interpolate'] and plot
+            delta_interpolator=delta_interpolator
         )
 
         comb_metrics = (analyze_pilots(
@@ -285,6 +296,8 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
 
         if plot and plot_opt['snr_time_comb'] and n_comb:
             plot_snr_over_time(comb_metrics["snr_db_med"], title="Comb Pilot SNR over OFDM symbols", pos=pilot_pos)
+        if plot and plot_opt['freq_offset_interpolate']:
+            delta_interpolator.plot()
         if print_flag and n_comb:
             if print_opt['pilot_delta']:
                 print('index    delta           phi')
@@ -416,6 +429,8 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
             all_idx = np.arange(M)
             pilot_pos_global = all_idx[(all_idx % (INTERVAL + 1)) == INTERVAL] if INTERVAL is not None else np.zeros(0)
             data_pos_global = all_idx[(all_idx % (INTERVAL + 1)) != INTERVAL] if INTERVAL is not None else all_idx
+
+            delta_interpolator.set_params(node_pos=np.linspace(delta_interp_start, M-1, M+np.abs(delta_interp_start)).astype(int))
 
             ofdm_idx_global = ofdm_idx_global[:data_pos_global.shape[0], :]
             sc_freq_global = sc_freq_global[:data_pos_global.shape[0],:]

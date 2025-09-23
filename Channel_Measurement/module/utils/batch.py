@@ -24,7 +24,6 @@ from .ldpc_jossy import code
 from .demodulate import _qpsk_hard, QPSK_reflection, get_constellation
 
 
-
 # ========= EVM / SNR =========
 def evm_from_constellation(const: np.ndarray, ref: np.ndarray) -> np.ndarray:
     """
@@ -298,7 +297,7 @@ def build_segments_from_pilots(H_start: np.ndarray,
                                symbol_len: int,
                                N: int,
                                fs: float = 48000,
-                               delta_guard_th: float = 1e-4,
+                               delta_interpolator=None,
                                # 全局漂移（无 comb 或尾段回退时使用）
                                delta_global: float = 0.0,
                                phi_global: float = 0.0,
@@ -307,11 +306,7 @@ def build_segments_from_pilots(H_start: np.ndarray,
                                pilot_ref_comb_fd: Optional[np.ndarray] = None,
                                # 权重控制
                                distance_power: float = 1.0,
-                               eps: float = 1.0,
-                               # 插值控制
-                               interp_smooth: float = 0.0,
-                               interp_mode: str = 'hold',
-                               interp_plot: bool = False) -> Tuple[Dict[str, np.ndarray], Dict[str, Optional[np.ndarray, float]]]:
+                               eps: float = 1.0) -> Tuple[Dict[str, np.ndarray], Dict[str, Optional[np.ndarray, float]]]:
     """
         构建“段（segment）级”的信道参考与漂移参数，并为每个数据 OFDM 符号给出两路参考的
         外推间隔（dt）与融合权重（w1, w2）。本函数还可在未显式提供 comb 质量 q 时，内部评估
@@ -409,9 +404,7 @@ def build_segments_from_pilots(H_start: np.ndarray,
             gap = int(pidx - prev_idx)
             d_j, p_j = _fit_drift_between(H_ref, Hf_comb[j], gap, N=N, symbol_len=symbol_len,
                                           return_phi=True, DATA_BINS=DATA_BINS, plot=False)
-            # if np.abs(d_j) > delta_guard_th:
-            #     continue
-            valid_pilot_list.append(pidx)
+            delta_interpolator.update(prev_idx, pidx, d_j)
             H_s_list.append(H_ref.copy())
             d_list.append(d_j)
             p_list.append(p_j)
@@ -433,30 +426,6 @@ def build_segments_from_pilots(H_start: np.ndarray,
                             index=int(M - prev_idx), symbol_len=symbol_len,
                             delta=delta_global, fixed_phase_shift_factor=phi_global)
         segs.append((prev_idx, M, H_start.copy(), H_end.copy(), float(delta_global), float(phi_global), -1, int(M - prev_idx)))
-
-    # freq_offset
-    deltas = np.array(d_list)
-    freq_offsets = fs/ (deltas+1) - fs
-    ofdm_idx = np.array(valid_pilot_list)
-    # here new_deltas[0] correspond to Hf[0]/Hf[-1]
-    if ofdm_idx.size > 1:
-        interp_freq_offset = segment_means_on(freq_offsets=freq_offsets.copy(), ofdm_idx=ofdm_idx,
-                                              eval_idx=np.concatenate([np.array([-1]),all_idx]),
-                                              smoothing=interp_smooth, extrap=interp_mode)
-        new_deltas = 1 / (interp_freq_offset / fs + 1) - 1
-        if interp_plot:
-            from matplotlib import pyplot as plt
-            plt.plot(all_idx, interp_freq_offset)
-            plt.scatter(all_idx - 0.5, interp_freq_offset, marker='*', color='red', label='interpolate')
-            plt.scatter(np.arange(pilot_pos[-1] + 1) - 0.5, np.repeat(freq_offsets, np.diff(ofdm_idx)), marker='o', s=4,
-                        color='black', label='comb pilot')
-            for i in ofdm_idx:
-                plt.axvline(i, linestyle='dotted', color='black')
-            plt.axvline(M - 1, linestyle='dotted', color='black')
-            plt.legend()
-            plt.show()
-    else:
-        new_deltas = None
 
     # ------- 2) 准备每段的 q（若未传 q_comb 则内部计算） -------
     q_list = None
@@ -502,26 +471,13 @@ def build_segments_from_pilots(H_start: np.ndarray,
         if not np.any(mask):
             continue
         idxs = np.where(mask)[0]
-        i_vals = data_pos[idxs].astype(float)
+        i_vals = data_pos[idxs].astype(int)
 
         dt_from_start = i_vals - float(start_idx)
         near_idx = float(end_idx)
-        dt_from_near  = i_vals - near_idx
+        dt_from_near = i_vals - near_idx
         d1 = np.maximum(dt_from_start, 0.0)
         d2 = np.abs(dt_from_near)
-
-        # 计算comb到data的平均delta, new_deltas中的delta是相邻symbol的
-        if new_deltas is not None:
-            if pilot_pos[-1] < M-1 and end_idx == M:
-                delta_used_mask = np.concatenate([i_vals.astype(int)])
-                delta_used = new_deltas[delta_used_mask]
-                delta_from_start = np.array([np.sum(delta_used[:i]) / i for i in range(1, delta_used.size+1)])
-                delta_from_end = np.repeat([d_j], i_vals.size)
-            else:
-                delta_used_mask = np.concatenate([i_vals.astype(int), np.array([end_idx])])
-                delta_used = new_deltas[delta_used_mask]
-                delta_from_start = np.array([np.sum(delta_used[:i])/i for i in range(1,delta_used.size)])
-                delta_from_end = np.array([np.sum(delta_used[-i:])/i for i in range(1, delta_used.size)])[::-1]
 
         # 质量因子：本段对应的 comb 质量（若不可得则为 1）
         if q_list is not None and j_idx is not None and j_idx >= 0 and j_idx < q_list.size:
@@ -538,8 +494,8 @@ def build_segments_from_pilots(H_start: np.ndarray,
         cnt = idxs.size
         H_start_per[ptr:ptr+cnt, :] = Hs[None, :]
         H_near_per[ptr:ptr+cnt,  :] = Hn[None, :]
-        delta_from_s[ptr:ptr+cnt]   = delta_from_start if new_deltas is not None else d_j
-        delta_from_e[ptr:ptr+cnt]   = delta_from_end if new_deltas is not None else d_j
+        delta_from_s[ptr:ptr+cnt]   = delta_interpolator.get_interp_delta(i_vals, start_idx)
+        delta_from_e[ptr:ptr+cnt]   = delta_interpolator.get_interp_delta(i_vals, end_idx if end_idx < M else start_idx)
         phi_per[ptr:ptr+cnt]        = p_j
         dt1[ptr:ptr+cnt]            = dt_from_start
         dt2[ptr:ptr+cnt]            = dt_from_near

@@ -413,7 +413,7 @@ def segment_means_on(
     preserve_endpoints: bool = True,
     endpoint_weight: float = 1e6,
     bc_type: str = "natural",
-    extrap: str = "spline",  # 'spline' 或 'hold'
+    extrap: str = "hold",  # 'spline' 或 'hold'
 ) -> np.ndarray:
     """
     在新的边界 eval_idx 上计算“新段均值”。允许 eval_idx 超出原始 ofdm_idx（外推）。

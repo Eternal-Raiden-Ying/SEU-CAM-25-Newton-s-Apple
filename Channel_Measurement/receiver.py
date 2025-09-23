@@ -38,7 +38,7 @@ if __name__ == "__main__":
         'snr_time_comb':                    False,
         'snr_time_data':                    False,  # 数据阶段（判决导向统计）的 SNR(随符号)曲线
         'snr_over_sc':                      False,  # 跨子载波的平均 SNR 曲线 (data symbol)
-        'freq_offset_interpolate':          False
+        'freq_offset_interpolate':          True
     }
 
     print_opt = {
@@ -87,7 +87,7 @@ if __name__ == "__main__":
         # frequency offset interpolate
         interp_mode='hold', interp_smooth=0.0,
         # plot settings
-        plot=False, plot_opt=plot_opt,
+        plot=True, plot_opt=plot_opt,
         # print settings
         print_flag=True, print_opt=print_opt, print_len=64, print_pad='-'
     )

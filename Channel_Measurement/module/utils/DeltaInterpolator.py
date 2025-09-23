@@ -1,12 +1,15 @@
+import warnings
+
 import numpy as np
-from scipy.interpolate import interp1d, CubicSpline
+from .math_process import segment_means_on
+
 
 __all__ = ['DeltaInterpolator']
 
 class DeltaInterpolator:
     """
     面向对象的 delta 插值器：
-      (1) add_node(idx, delta, symbol_len)    —— 添加节点（会转换为频偏并缓存）
+      (1) update(idx_start, idx_end, delta)    —— 添加节点（会转换为频偏并缓存）
       (2) set_params(method, smooth)          —— 设置插值方式/参数
       (3) build()                              —— 构建插值器
       (4) delta_at(indices, symbol_len)        —— 返回这些整点处的“小段 delta”（由频偏反变换）
@@ -16,88 +19,129 @@ class DeltaInterpolator:
       - 平均小段 delta：对 [a, b) 所跨的小段逐一取 delta，然后做平均。
       - 允许方法：'hold'（阶梯保持）、'linear'、'cubic'（CubicSpline）。默认 'hold'。
     """
-    def __init__(self, method: str = 'hold', smooth: float = 0.0):
-        self.nodes_idx: list[int] = []
-        self.nodes_dlt: list[float] = []
-        self.nodes_fpo: list[float] = []  # 频偏（delta / symbol_len）
+    def __init__(self, fs=48000, method: str = 'hold', smooth: float = 0.0):
+        self.fs: float = float(fs)
         self.method = method
         self.smooth = smooth
-        self._built = False
-        self._interp = None  # callable: x -> freq_offset
-
-    def add_node(self, idx: int, delta: float, symbol_len: int):
-        self.nodes_idx.append(int(idx))
-        self.nodes_dlt.append(float(delta))
-        self.nodes_fpo.append(float(delta) / float(symbol_len))
-        # 排序保持单调
-        order = np.argsort(self.nodes_idx)
-        self.nodes_idx = list(np.asarray(self.nodes_idx)[order])
-        self.nodes_dlt = list(np.asarray(self.nodes_dlt)[order])
-        self.nodes_fpo = list(np.asarray(self.nodes_fpo)[order])
+        self.node_pos: np.ndarray = np.array([])        # correspond to seg_fso
+        self.seg_fso: np.ndarray = np.array([])         # interpolate res
+        self._seg_n_s: list[int] = []
+        self._seg_n_e: list[int] = []
+        self._seg_dlt: list[float] = []
+        self._seg_fso: np.ndarray = np.array([])        # known fso
+        self._endpoint_idx: np.ndarray = np.array([])   # correspond to _seg_fso
         self._built = False
 
-    def set_params(self, *, method: str | None = None, smooth: float | None = None):
+    def set_params(self, *, method: str | None = None, smooth: float | None = None, node_pos: np.ndarray | None):
         if method is not None:
             self.method = method
         if smooth is not None:
             self.smooth = float(smooth)
+        if node_pos is not None:
+            self.node_pos = node_pos
         self._built = False
 
-    def _build_impl(self):
-        xs = np.asarray(self.nodes_idx, dtype=float)
-        ys = np.asarray(self.nodes_fpo, dtype=float)
-        if xs.size == 0:
-            # 没有节点：退化为常数0频偏
-            self._interp = lambda x: np.zeros_like(np.asarray(x, dtype=float))
-        elif xs.size == 1 or self.method == 'hold':
-            # 台阶保持：就近向前保持
-            x0, y0 = float(xs[0]), float(ys[0])
-            x_last, y_last = float(xs[-1]), float(ys[-1])
-            def _hold(xx):
-                xx = np.asarray(xx, dtype=float)
-                yy = np.zeros_like(xx)
-                yy[xx <= x0] = y0
-                yy[xx >= x_last] = y_last
-                mask_mid = (xx > x0) & (xx < x_last)
-                if mask_mid.any():
-                    # 找到每个点的左侧最近节点
-                    idx = np.searchsorted(xs, xx[mask_mid], side='right') - 1
-                    yy[mask_mid] = ys[idx]
-                return yy
-            self._interp = _hold
-        elif self.method in ('linear',):
-            from scipy.interpolate import interp1d
-            self._interp = interp1d(xs, ys, kind='linear', fill_value='extrapolate', assume_sorted=True)
-        elif self.method in ('cubic','spline'):
-            from scipy.interpolate import CubicSpline
-            # smooth 在 CubicSpline 不直接用；如需光滑可外设平滑样条
-            self._interp = CubicSpline(xs, ys, bc_type='natural')
+    def update(self, idx_s: int | np.ndarray, idx_e: int | np.ndarray, delta: float | np.ndarray):
+        self._built = False
+
+        if isinstance(idx_s, np.ndarray):
+            assert isinstance(idx_e, np.ndarray) and isinstance(delta, np.ndarray)
+            assert idx_s.shape == idx_e.shape and delta.shape == idx_s.shape
+            for index in range(idx_s.size):
+                start = int(idx_s.ravel()[index])
+                end = int(idx_e.ravel()[index])
+                dlt = float(delta.ravel()[index])
+                if start in self._seg_n_s:
+                    i = self._seg_n_s.index(start)  # the first index, correspond to coarse-grained delta
+                    if self._seg_n_e[i] <= end:
+                        return
+                    else:
+                        self._seg_n_s.pop(i)
+                        self._seg_n_e.pop(i)
+                        self._seg_dlt.pop(i)
+                self._seg_n_s.append(start)
+                self._seg_n_e.append(end)
+                self._seg_dlt.append(dlt)
         else:
-            raise ValueError(f"unknown interp method: {self.method}")
+            start = int(idx_s)
+            end = int(idx_e)
+            dlt = float(delta)
+            if start in self._seg_n_s:
+                i = self._seg_n_s.index(start)  # the first index, correspond to coarse-grained delta
+                if self._seg_n_e[i] <= end:
+                    return
+                else:
+                    self._seg_n_s.pop(i)
+                    self._seg_n_e.pop(i)
+                    self._seg_dlt.pop(i)
+            self._seg_n_s.append(start)
+            self._seg_n_e.append(end)
+            self._seg_dlt.append(dlt)
+
+        self._delta2fso()
+
+    def _delta2fso(self):
+        idx = np.argsort(np.array(self._seg_n_s))
+        self._seg_fso = self.fs / (np.array(self._seg_dlt)[idx] + 1) - self.fs
+        self._endpoint_idx = np.concatenate([
+            np.array(self._seg_n_s)[idx], np.array(self._seg_n_e)[idx][-1][None]
+        ], axis=0
+        )
+        return self._seg_fso
+
+    def _build(self):
+        if self._built: return
+        self.seg_fso = segment_means_on(
+            freq_offsets=self._seg_fso,
+            ofdm_idx=self._endpoint_idx,
+            eval_idx=self.node_pos,
+            smoothing=self.smooth,
+            extrap=self.method
+        )
         self._built = True
 
-    def build(self):
-        self._build_impl()
+    def _fso2delta(self):
+        if not self._built:
+            self._build()
+        return 1 / (self.seg_fso / self.fs + 1) - 1
 
-    def _ensure(self):
-        if not self._built or self._interp is None:
-            self._build_impl()
+    def get_interp_delta(self, data_pos: int | np.ndarray, pilot_pos: int):
+        delta_per_seg = self._fso2delta()
+        pilot_idx = int(np.where(self.node_pos == pilot_pos)[0])
+        if isinstance(data_pos, np.ndarray):
+            deltas = []
+            for element in data_pos:
+                data_idx = int(np.where(self.node_pos == element)[0])
+                if data_idx > pilot_idx:
+                    deltas.append(np.sum(delta_per_seg[pilot_idx+1:data_idx+1]) / (data_idx - pilot_idx))
+                elif data_idx <  pilot_idx:
+                    deltas.append(np.sum(delta_per_seg[data_idx+1:pilot_idx+1]) / (pilot_idx - data_idx))
+                else:
+                    raise ValueError(f"unexcepted idx, data pos {element} == pilot pos {pilot_pos}")
+            return np.array(deltas)
+        else:
+            data_pos = int(data_pos)
+            if data_pos > pilot_idx:
+                delta = np.sum(delta_per_seg[pilot_idx + 1:data_pos + 1]) / (data_pos - pilot_idx)
+            elif data_pos < pilot_idx:
+                delta = np.sum(delta_per_seg[data_pos + 1:pilot_idx + 1]) / (pilot_idx - data_pos)
+            else:
+                raise ValueError(f"unexcepted idx, data pos {data_pos} == pilot pos {pilot_pos}")
+            return delta
 
-    def freq_offset_at(self, indices: np.ndarray | list[int] | int):
-        self._ensure()
-        return self._interp(indices)
+    def plot(self):
+        if not self._built:
+            self._build()
+        from matplotlib import pyplot as plt
+        raw_x = np.concatenate([
+            self._endpoint_idx[:-1].reshape(-1,1), self._endpoint_idx[1:].reshape(-1,1)
+        ], axis=1).ravel()
 
-    def delta_at(self, indices: np.ndarray | list[int] | int, symbol_len: int):
-        fpo = self.freq_offset_at(indices)  # 频偏
-        return np.asarray(fpo, dtype=float) * float(symbol_len)
+        raw_y = np.repeat(self._seg_fso, 2)
 
-    def mean_delta_over_interval(self, a: int, b: int, *, symbol_len: int) -> float:
-        """
-        区间 [a, b) 的平均“小段 delta”；若 a>=b 返回 0.
-        """
-        if b <= a:
-            return 0.0
-        # 用整点处小段delta近似 [a, b) 里每个单位间隔的小段
-        samples = np.arange(a, b, dtype=int)
-        dlt = self.delta_at(samples, symbol_len=symbol_len)  # len = b-a
-        return float(np.mean(dlt)) if dlt.size else 0.0
+        plt.plot((self.node_pos[:-1]+self.node_pos[1:])/2, self.seg_fso)
+        plt.scatter((self.node_pos[:-1]+self.node_pos[1:])/2, self.seg_fso,
+                    marker='*', color='red', label='interpolate')
+        plt.plot(raw_x, raw_y, color='black', label='comb pilot')
+        plt.legend()
+        plt.show()
