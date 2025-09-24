@@ -19,9 +19,9 @@ if __name__ == "__main__":
         if not os.path.exists(dir_name):
             os.makedirs(dir_name)
 
-    rx_pth = os.path.join(record_dir, "LDPC", "success",
-                          "[smy]received_tiff_chirp_l2_10_24k_fs48k_N8192_cp1024_S8same_R1-2_Z81_802.11n_A_no_scrambler_0.05-0.8_head_no_comb_1.npy")
-    pilot_pth = os.path.join(save_dir, "pilot", "pilot_8same_N8192_fixed.npy")
+    rx_pth = os.path.join(record_dir, "LDPC", "temp",
+                          "[zrh]rx.wav")
+    pilot_pth = os.path.join(save_dir, "pilot", "pilot_STANDARD_freq_domain.npy")
     tx_file_path = os.path.join(data_dir, "answer.tiff")
     # rx_pth = r"D:\Documents\Coding\Python\SEUCAM\Channel_Measurement\test.npy"
 
@@ -38,7 +38,7 @@ if __name__ == "__main__":
         'snr_time_comb':                    False,
         'snr_time_data':                    False,  # 数据阶段（判决导向统计）的 SNR(随符号)曲线
         'snr_over_sc':                      False,  # 跨子载波的平均 SNR 曲线 (data symbol)
-        'freq_offset_interpolate':          True
+        'freq_offset_interpolate':          False
     }
 
     print_opt = {
@@ -69,7 +69,7 @@ if __name__ == "__main__":
         # pseudo pilot strategy
         edge_expand=32, max_pseudo_iter=20,
         # groundtruth settings
-        groundtruth=True, tx_file_path=tx_file_path,
+        groundtruth=False, tx_file_path=tx_file_path,
         # scrambler param
         use_scrambler=False, scrambler_seed=256, scrambler_mode='random', scrambler_bitwidth=None,
         # ldpc param
@@ -87,7 +87,7 @@ if __name__ == "__main__":
         # frequency offset interpolate
         interp_mode='hold', interp_smooth=0.0,
         # plot settings
-        plot=True, plot_opt=plot_opt,
+        plot=False, plot_opt=plot_opt,
         # print settings
         print_flag=True, print_opt=print_opt, print_len=64, print_pad='-'
     )

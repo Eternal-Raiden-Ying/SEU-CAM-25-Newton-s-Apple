@@ -92,8 +92,8 @@ class DeltaInterpolator:
     def _build(self):
         if self._built: return
         self.seg_fso = segment_means_on(
-            freq_offsets=self._seg_fso,
-            ofdm_idx=self._endpoint_idx,
+            freq_offsets=np.concatenate([self._seg_fso, self._seg_fso[-1][None]]),
+            ofdm_idx=np.concatenate([self._endpoint_idx, (self.node_pos[-1]+1)[None]]),
             eval_idx=self.node_pos,
             smoothing=self.smooth,
             extrap=self.method
@@ -113,9 +113,9 @@ class DeltaInterpolator:
             for element in data_pos:
                 data_idx = int(np.where(self.node_pos == element)[0])
                 if data_idx > pilot_idx:
-                    deltas.append(np.sum(delta_per_seg[pilot_idx+1:data_idx+1]) / (data_idx - pilot_idx))
-                elif data_idx <  pilot_idx:
-                    deltas.append(np.sum(delta_per_seg[data_idx+1:pilot_idx+1]) / (pilot_idx - data_idx))
+                    deltas.append(np.sum(delta_per_seg[pilot_idx:data_idx]) / (data_idx - pilot_idx))
+                elif data_idx < pilot_idx:
+                    deltas.append(np.sum(delta_per_seg[data_idx:pilot_idx]) / (pilot_idx - data_idx))
                 else:
                     raise ValueError(f"unexcepted idx, data pos {element} == pilot pos {pilot_pos}")
             return np.array(deltas)
@@ -139,9 +139,13 @@ class DeltaInterpolator:
 
         raw_y = np.repeat(self._seg_fso, 2)
 
-        plt.plot((self.node_pos[:-1]+self.node_pos[1:])/2, self.seg_fso)
+        plt.plot(raw_x, raw_y, color='blue',
+                 label='comb pilot', linestyle='dotted', linewidth=3, alpha=0.7)
+        plt.plot((self.node_pos[:-1]+self.node_pos[1:])/2, self.seg_fso,
+                 color='red', label='interpolate', linewidth=3, alpha=0.7)
         plt.scatter((self.node_pos[:-1]+self.node_pos[1:])/2, self.seg_fso,
-                    marker='*', color='red', label='interpolate')
-        plt.plot(raw_x, raw_y, color='black', label='comb pilot')
-        plt.legend()
+                    marker='*', s=7, color='black', label="_nolegend_")
+        plt.xlabel("OFDM symbol index")
+        plt.ylabel('fs offset/Hz')
+        plt.legend(loc='upper right')
         plt.show()

@@ -156,7 +156,7 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
     sym_pilot_td = get_symbols(rx_pilot_td, cp_len=cp_len, N=N)                      # [num_pilot, N] 时域
     Hf_pilot = evaluate_H_f(sym_pilot_td, pilots_fd=pilot)      # [num_pilot, N]
     res_arg = estimate_drift_and_origin(Hf_pilot, N=N, symbol_len=symbol_len, DATA_BINS=DATA_BINS,
-                                        return_plot_args=plot_opt['unwrap'], mode='each')
+                                        return_plot_args=plot_opt['unwrap'], mode='total')
     delta0 = np.median(res_arg[0]) if res_arg[0].size > 1 else res_arg[0]
     phi0 = np.median(res_arg[1]) if res_arg[1].size > 1 else res_arg[1]
     origin_H_f = res_arg[2]
@@ -164,11 +164,10 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
 
     if isinstance(res_arg[0], np.ndarray) and res_arg[0].size > 1:
         delta_interpolator.update(
-            idx_s=np.linspace(-num_pilot, -1, num_pilot-1).astype(int),
-            idx_e=np.linspace(-num_pilot+1, 0, num_pilot-1).astype(int),
+            idx_s=np.linspace(-num_pilot, -2, num_pilot-1).astype(int),
+            idx_e=np.linspace(-num_pilot+1, -1, num_pilot-1).astype(int),
             delta=res_arg[0][1:]
         )
-        delta_interp_start = -num_pilot
         pilot_metrics = analyze_pilots(
             symbols_td=sym_pilot_td, pilot_ref=pilot, DATA_BINS=DATA_BINS, mode="front", clockwise=clockwise,
             Hf=correct_H_f(origin_H_f=origin_H_f, N=N, index=np.arange(num_pilot), symbol_len=symbol_len,
@@ -176,8 +175,7 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
                            fixed_phase_shift_factor=np.concatenate([np.zeros(1), np.array([np.sum(res_arg[1][1:i+1])/i for i in range(1,num_pilot)])], axis=0))
         )
     else:
-        delta_interpolator.update(-1,0,res_arg[0])
-        delta_interp_start = -1
+        delta_interpolator.update(-num_pilot,-1,res_arg[0])
         pilot_metrics = analyze_pilots(
             symbols_td=sym_pilot_td, pilot_ref=pilot, DATA_BINS=DATA_BINS, mode="front", clockwise=clockwise,
             Hf=correct_H_f(origin_H_f=origin_H_f, N=N, index=np.arange(num_pilot), symbol_len=symbol_len,
@@ -235,7 +233,7 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
     all_idx = np.arange(M_try)
     pilot_pos_global = all_idx[(all_idx % (INTERVAL + 1)) == INTERVAL] if INTERVAL is not None else np.zeros(0)
     data_pos_global = all_idx[(all_idx % (INTERVAL + 1)) != INTERVAL] if INTERVAL is not None else all_idx
-    delta_interpolator.set_params(node_pos=np.linspace(delta_interp_start, M-1, M+np.abs(delta_interp_start)).astype(int))
+    delta_interpolator.set_params(node_pos=np.linspace(-num_pilot, M-1, M+num_pilot).astype(int))
     if print_flag: print_padded(f"first try to solve {M_try} OFDM symbols", print_len, print_pad)
 
 
@@ -430,7 +428,7 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
             pilot_pos_global = all_idx[(all_idx % (INTERVAL + 1)) == INTERVAL] if INTERVAL is not None else np.zeros(0)
             data_pos_global = all_idx[(all_idx % (INTERVAL + 1)) != INTERVAL] if INTERVAL is not None else all_idx
 
-            delta_interpolator.set_params(node_pos=np.linspace(delta_interp_start, M-1, M+np.abs(delta_interp_start)).astype(int))
+            delta_interpolator.set_params(node_pos=np.linspace(-num_pilot, M-1, M+num_pilot).astype(int))
 
             ofdm_idx_global = ofdm_idx_global[:data_pos_global.shape[0], :]
             sc_freq_global = sc_freq_global[:data_pos_global.shape[0],:]
@@ -484,7 +482,7 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
 
         # 下一轮 pilot
         pilot_pos = choose_next_pilots(data_pos=data_pos, edge_expand_k=getattr(args, "edge_expand", 2),
-                                       available_pilots=np.union1d(np.array(promotable), pilot_pos))
+                                       available_pilots=np.array(promotable))
         # np.union1d(np.array(promotable), pilot_pos)           np.array(promotable)
 
         # 1) 原 comb 导频参考（Nd 列）
