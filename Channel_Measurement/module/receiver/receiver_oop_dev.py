@@ -1,4 +1,8 @@
 # -*- coding: utf-8 -*-
+# ⚠️ Experimental / WIP — OOP-architected receiver using OFDMSoftDecoder.
+# The stable production receiver is receiver_stable.py.
+# This version uses SigmaTracker, DD_CPE_PLL, DriftGuard classes from decoder_oop.py.
+# Not yet feature-complete; kept for reference and future development.
 from __future__ import annotations
 import numpy as np
 import argparse

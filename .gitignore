@@ -13,9 +13,12 @@ __pycache__/
 /Channel_Measurement/module/utils/ldpc_jossy/src/
 .idea
 /Week1 Challenge/player/
-/Channel_Measurement/data/
-/Channel_Measurement/output/
+/Channel_Measurement/data/*
+!/Channel_Measurement/data/answer.tiff
+/Channel_Measurement/output/*
+!/Channel_Measurement/output/ldpc/from_zrh_rx.tif
 /Channel_Measurement/record/
-/Channel_Measurement/save/
+/Channel_Measurement/save/*
+!/Channel_Measurement/save/pilot/
 /Channel_Measurement/temp
 /repo-branches.svg
