@@ -13,5 +13,5 @@ if __name__ == "__main__":
         os.makedirs(output_dir)
     input("按任意键开始录音")
     print("🎙 开始录音...")
-    record_signal(t=75, filename=filename,pth=output_dir,fs=fs)
+    record_signal(t=49, filename=filename,pth=output_dir,fs=fs)
     print("录音完成")
