@@ -10,9 +10,9 @@ __pycache__/
 /Channel_Measurement/module/utils/ldpc_jossy/bin/
 /Channel_Measurement/module/utils/ldpc_jossy/data/
 /Channel_Measurement/module/utils/ldpc_jossy/src/
-/Channel_Measurement/data/
+/Channel_Measurement/data/*
+!/Channel_Measurement/data/demo.txt
 /Channel_Measurement/output/
 /Channel_Measurement/record/
-/Channel_Measurement/save/
 /Channel_Measurement/temp
 

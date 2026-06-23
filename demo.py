@@ -26,7 +26,7 @@ OUTPUT_DIR = PROJ / "Channel_Measurement" / "output" / "ldpc"
 for d in [SIGNALS_DIR, OUTPUT_DIR]:
     os.makedirs(d, exist_ok=True)
 
-DEMO_TXT = PROJ / "demo.txt"
+DEMO_TXT = PROJ / "Channel_Measurement" / "data" / "demo.txt"
 
 
 def main():
