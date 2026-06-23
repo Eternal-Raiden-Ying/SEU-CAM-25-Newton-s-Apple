@@ -18,6 +18,7 @@ from module.cfg.config import (
     EmitterConfig, OFDMConfig, ChirpConfig, HeaderConfig,
     ScramblerConfig, LDPCConfig, ReceiverConfig,
 )
+from module.utils.io_interface import emitter_cfg_to_fname
 
 # ── Paths ──
 SAVE_DIR = PROJ / "Channel_Measurement" / "save" / "signal"
@@ -39,12 +40,6 @@ def emitter_config(pilot_mode: str, use_scrambler: bool, scr_seed: int, Z: int) 
         ldpc=LDPCConfig(z=Z),
         pilot_mode=pilot_mode,
     )
-
-
-def fname_from_meta(meta: dict) -> str:
-    scram = f"scr{meta['scrambler_seed']}" if meta['scrambler'] else "noscr"
-    return (f"tx_N{meta['N']}_cp{meta['cp_len']}_S8{meta['pilot_mode']}"
-            f"_R{meta['rate'].replace('/','-')}_Z{meta['Z']}_{scram}.npy")
 
 
 # ── Test configs ──
@@ -72,7 +67,7 @@ def main():
         tx_wf, pilots_fd, meta = emitter(str(INPUT_FILE), tx_cfg)
         tx_time = time.time() - t0
 
-        fname = fname_from_meta(meta)
+        fname = emitter_cfg_to_fname(tx_cfg)
         np.save(SAVE_DIR / fname, tx_wf)
         print(f"  TX: {len(tx_wf)} samples ({len(tx_wf)/48000:.1f}s) -> {fname}")
 

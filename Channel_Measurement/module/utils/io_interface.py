@@ -85,3 +85,15 @@ def ascii3_to_24bits(s3: str) -> np.ndarray:
     for k in range(24):
         b[k] = (val >> (23 - k)) & 1
     return b
+
+
+def emitter_cfg_to_fname(cfg, suffix: str = ".npy") -> str:
+    """
+    Build a parameter-encoded filename from an EmitterConfig.
+    Example: tx_N8192_cp1024_S8standard_R1-2_Z81_noscr.npy
+    """
+    scram = f"scr{cfg.scrambler_seed}" if cfg.use_scrambler else "noscr"
+    comb = "_comb" if cfg.use_comb else ""
+    rate_str = cfg.ldpc_rate.replace("/", "-")
+    return (f"tx_N{cfg.N}_cp{cfg.cp_len}_S8{cfg.pilot_mode}"
+            f"_R{rate_str}_Z{cfg.ldpc_z}_{scram}{comb}{suffix}")
