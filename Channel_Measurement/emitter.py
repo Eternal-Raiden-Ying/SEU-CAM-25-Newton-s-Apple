@@ -20,9 +20,9 @@ from module.cfg.config import EmitterConfig, OFDMConfig, ChirpConfig, HeaderConf
 # ── Default paths ──
 TIFF_INPUT_PATH = str(_PROJ_ROOT / "data" / "answer.tiff")
 TXT_INPUT_PATH  = str(_PROJ_ROOT / "data" / "shakespace_poem_middle.txt")
-PILOT_SAVE_PATH = str(_PROJ_ROOT / "save" / "pilot" / "pilot_different_N8192_same.npy")
-DATA_WAVEFORM_SAVE_PATH = str(_PROJ_ROOT / "save" / "signal" / "signal_N8192_tiff_nocomb.npy")
-WAV_SAVE_PATH = str(_PROJ_ROOT / "save" / "signal" / "tx_signal_N8192_nocomb.wav")
+PILOT_SAVE_PATH = str(_PROJ_ROOT / "assets" / "pilots" / "pilot_different_N8192_same.npy")
+DATA_WAVEFORM_SAVE_PATH = str(_PROJ_ROOT / "assets" / "signals" / "signal_N8192_tiff_nocomb.npy")
+WAV_SAVE_PATH = str(_PROJ_ROOT / "assets" / "signals" / "tx_signal_N8192_nocomb.wav")
 
 
 def main():

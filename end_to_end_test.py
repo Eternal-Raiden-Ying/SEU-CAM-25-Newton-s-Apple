@@ -21,8 +21,9 @@ from module.cfg.config import (
 from module.utils.io_interface import emitter_cfg_to_fname
 
 # ── Paths ──
-SAVE_DIR = PROJ / "Channel_Measurement" / "save" / "signal"
+SIGNALS_DIR = PROJ / "Channel_Measurement" / "assets" / "signals"
 OUTPUT_DIR = PROJ / "Channel_Measurement" / "output" / "ldpc"
+os.makedirs(SIGNALS_DIR, exist_ok=True)
 for d in [SAVE_DIR, OUTPUT_DIR]:
     os.makedirs(d, exist_ok=True)
 
@@ -68,7 +69,7 @@ def main():
         tx_time = time.time() - t0
 
         fname = emitter_cfg_to_fname(tx_cfg)
-        np.save(SAVE_DIR / fname, tx_wf)
+        np.save(SIGNALS_DIR / fname, tx_wf)
         print(f"  TX: {len(tx_wf)} samples ({len(tx_wf)/48000:.1f}s) -> {fname}")
 
         # RX — ReceiverConfig directly

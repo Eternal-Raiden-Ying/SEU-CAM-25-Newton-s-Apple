@@ -8,18 +8,14 @@ from module.cfg.config import ReceiverConfig, OFDMConfig, ChirpConfig, HeaderCon
 
 project_dir = r"D:\Documents\Coding\Python\SEUCAM"
 output_dir = os.path.join(project_dir, "Channel_Measurement/output/ldpc")
-record_dir = os.path.join(project_dir, "Channel_Measurement/record")
-data_dir = os.path.join(project_dir, "Channel_Measurement/data")
-save_dir = os.path.join(project_dir, "Channel_Measurement/save")
+assets_dir = os.path.join(project_dir, "Channel_Measurement/assets")
 
 if __name__ == "__main__":
     assert os.path.exists(project_dir), "specify your proj dir"
-    for d in [output_dir, record_dir, data_dir]:
-        os.makedirs(d, exist_ok=True)
+    os.makedirs(output_dir, exist_ok=True)
 
-    rx_pth = os.path.join(record_dir, "LDPC", "temp", "[zrh]rx.wav")
-    pilot_pth = os.path.join(save_dir, "pilot", "pilot_STANDARD_freq_domain.npy")
-    tx_file_path = os.path.join(data_dir, "answer.tiff")
+    rx_pth = os.path.join(project_dir, "Channel_Measurement/record", "LDPC", "temp", "[zrh]rx.wav")
+    pilot_pth = os.path.join(assets_dir, "pilots", "pilot_STANDARD_freq_domain.npy")
 
     # Build ReceiverConfig with production defaults
     cfg = ReceiverConfig(

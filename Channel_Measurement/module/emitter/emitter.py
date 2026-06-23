@@ -47,7 +47,7 @@ def emitter(
     # ── Pilot preamble ──
     pilot_mode = cfg.pilot_mode
     if pilot_mode == "standard":
-        std_path = Path(__file__).resolve().parents[3] / "save" / "pilot" / "pilot_STANDARD_freq_domain.npy"
+        std_path = Path(__file__).resolve().parents[3] / "assets" / "pilots" / "pilot_STANDARD_freq_domain.npy"
         if std_path.exists():
             pilots_fd = np.load(std_path)
         else:
