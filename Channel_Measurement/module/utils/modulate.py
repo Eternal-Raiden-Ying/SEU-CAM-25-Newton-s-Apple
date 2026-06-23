@@ -198,6 +198,86 @@ def serial_to_parallel(data:np.ndarray, N: int, mode='QPSK'):
     return data
 
 
+def random_qpsk_matrix(rows: int, cols: int, rng: np.random.Generator) -> np.ndarray:
+    """生成 rows×cols 的随机 QPSK（±1±j)/√2 矩阵，用于 OFDM 保护带填充。"""
+    re = rng.choice([-1, 1], size=(rows, cols))
+    im = rng.choice([-1, 1], size=(rows, cols))
+    return (re + 1j * im) / np.sqrt(2)
+
+
+def prepend_silence_complex(x: np.ndarray, fs: float, silence_sec: float) -> np.ndarray:
+    """在复数基带信号最前面加 silence_sec 秒的全零静音。"""
+    L = int(round(fs * silence_sec))
+    pad = np.zeros(L, dtype=np.complex64 if np.iscomplexobj(x) else np.float64)
+    return np.concatenate([pad, x])
+
+
+def OFDM_modulate_data(
+    symbols: np.ndarray,
+    N: int,
+    cp_len: int,
+    *,
+    data_start: int = 204,
+    data_tail: int = 819,
+    fill_seed: int = 2025,
+) -> np.ndarray:
+    """
+    OFDM 调制（保护带 + 共轭对称 + CP）。
+    仅在正频的中间 data_bins 承载数据，前后保护带用随机 QPSK 填充。
+
+    参数:
+      symbols: 1D QPSK 数据符号（complex）
+      N: IFFT 点数
+      cp_len: CP 长度
+      data_start: 正频前侧保护带宽度（子载波数，默认 204，匹配 receiver 端）
+      data_tail: 正频后侧保护带宽度（默认 819）
+      fill_seed: 保护带随机 QPSK 的 RNG 种子
+    返回:
+      with_cp_real: 时域实数波形（1D）
+    """
+    pos_cnt = N // 2 - 1
+    data_bins = pos_cnt - data_start - data_tail
+    if data_bins <= 0:
+        raise ValueError(f"data_bins <= 0 (pos_cnt={pos_cnt}, data_start={data_start}, data_tail={data_tail})")
+
+    n_sym = len(symbols) // data_bins
+    rem = len(symbols) % data_bins
+    if rem > 0:
+        pad = data_bins - rem
+        symbols = np.concatenate([
+            symbols,
+            QPSK_mapping(np.random.randint(0, 2, size=pad * 2).reshape(-1, 2)),
+        ])
+        n_sym += 1
+
+    data_matrix = symbols.reshape((n_sym, data_bins))
+    freq_data = np.zeros((n_sym, N), dtype=complex)
+
+    data_lo = 1 + data_start
+    data_hi = data_lo + data_bins
+    freq_data[:, data_lo:data_hi] = data_matrix
+
+    # 保护带随机 QPSK 填充
+    rng = np.random.default_rng(fill_seed)
+    left_sz = data_lo - 1
+    right_sz = (N // 2 - 1) - (data_hi - 1)
+    if left_sz > 0:
+        freq_data[:, 1 : 1 + left_sz] = random_qpsk_matrix(n_sym, left_sz, rng)
+    if right_sz > 0:
+        freq_data[:, data_hi : 1 + pos_cnt] = random_qpsk_matrix(n_sym, right_sz, rng)
+
+    # 负频共轭对称
+    freq_data[:, N // 2 + 1 :] = np.conj(freq_data[:, 1 : N // 2])[:, ::-1]
+
+    time_data = np.fft.ifft(freq_data, axis=1)
+    cp = time_data[:, -cp_len:]
+    with_cp = np.hstack([cp, time_data]).flatten()
+
+    max_abs = np.max(np.abs(with_cp))
+    if max_abs > 0:
+        with_cp = with_cp / max_abs
+    return np.real(with_cp)
+
 
 if __name__ == "__main__":
     # unit test

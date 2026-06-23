@@ -63,13 +63,25 @@ def save_pilot(constellations: np.ndarray, N: int, pth, filename):
     np.save(os.path.join(pth, filename), pilots)
 
 
-
-def num_to_bits_msb(n: int,* ,bit_num: int = 40) -> np.ndarray:
+def num_to_bits_msb(n: int, *, bit_num: int = 40) -> np.ndarray:
     """
-    把整数 n 转 40bit（MSB-first）。用于“文件大小（bit数）”。
+    Convert integer n to bit_num bits (MSB-first). Used for file size in bits.
     """
     assert 0 <= n < (1 << bit_num), f"payload length must fit in {bit_num} bits"
     b = np.zeros(bit_num, dtype=np.uint8)
     for k in range(bit_num):
-        b[k] = (n >> (bit_num -1 - k)) & 1
+        b[k] = (n >> (bit_num - 1 - k)) & 1
+    return b
+
+
+def ascii3_to_24bits(s3: str) -> np.ndarray:
+    """
+    Encode 3 ASCII chars to 24 bits (MSB-first).
+    e.g. 'txt' / 'tif' / 'bin' -- for the 64-bit file header type field.
+    """
+    assert len(s3) == 3, "file type must be 3 chars"
+    val = (ord(s3[0]) << 16) | (ord(s3[1]) << 8) | ord(s3[2])
+    b = np.zeros(24, dtype=np.uint8)
+    for k in range(24):
+        b[k] = (val >> (23 - k)) & 1
     return b

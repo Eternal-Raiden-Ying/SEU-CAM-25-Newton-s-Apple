@@ -59,7 +59,8 @@ def _esno_from_sigmas(sig_r: float, sig_i: float):
     return esno_lin, esno_db
 
 # ========= Comb 导频生成 =========
-def _generate_comb_pilot_symbol(N: int, seed: int) -> np.ndarray:
+def generate_pilot_symbol(N: int, seed: int) -> np.ndarray:
+    """Generate one OFDM pilot symbol (frequency domain, conjugate-symmetric, unit DC/Nyquist)."""
     rng = np.random.default_rng(seed)
     half = N // 2
     real_parts = rng.choice([-1, 1], size=half - 1)
@@ -73,7 +74,8 @@ def _generate_comb_pilot_symbol(N: int, seed: int) -> np.ndarray:
     return X
 
 def generate_comb_pilot_symbol(N: int, seed: int) -> np.ndarray:
-    return _generate_comb_pilot_symbol(N, seed)
+    """Alias for generate_pilot_symbol — kept for backward compatibility."""
+    return generate_pilot_symbol(N, seed)
 
 # ========= H(f) 估计 / 外推 =========
 def evaluate_H_f(symbols_td: np.ndarray,
