@@ -34,7 +34,7 @@ class OFDMConfig:
 @dataclass
 class ChirpConfig:
     """Chirp synchronization signal parameters."""
-    duration: float = 2.0
+    duration: float = 0.5
     f_l: int = 10
     f_h: int = 24000
     f_tail_l: int = 20
@@ -71,7 +71,7 @@ class LDPCConfig:
     rate: str = '1/2'
     z: int = 81
     ptype: str = 'A'
-    device: str = 'cuda'
+    device: str = 'cpu'
     batch: int = 512
     microbatch: int = 256
     llr_clip: float = 10.0
