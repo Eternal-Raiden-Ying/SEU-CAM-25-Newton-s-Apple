@@ -5,17 +5,18 @@ from dataclasses import dataclass, asdict, field
 from typing import Optional, Dict, Tuple, List
 import numpy as np
 
-# 依赖你现有的工具函数（名称按你仓库中 utils/batch.py 来）
-from .batch import (
-    evaluate_H_f,            # Ĥ(f) 估计：evaluate_H_f(symbols_td, pilots_fd)
-    correct_H_f,             # H 外推：correct_H_f(origin_H_f, delta, N, index, symbol_len, fixed_phase_shift_factor)
-    _fit_drift_between,       # 拟合跨 gap 漂移（delta, phi_step）
-    get_constellation,       # 均衡并抽取 DATA_BINS
-    pll_snr_median,          # 逐符号中位 SNR(dB)
-    _qpsk_hard,              # QPSK 硬判（用于噪声估计）
-    mmse_shrinkage,
-    robust_sigma
+# 依赖你现有的工具函数
+from .channel_estimate import (
+    evaluate_H_f,            # H(f) estimation: evaluate_H_f(symbols_td, pilots_fd)
+    correct_H_f,             # H extrapolation: correct_H_f(origin_H_f, delta, N, index, symbol_len, ...)
+    _fit_drift_between,       # fit drift across gap (delta, phi_step)
 )
+from .demodulate import (
+    get_constellation,       # equalize and extract DATA_BINS
+    _qpsk_hard,              # QPSK hard decision (for noise estimation)
+    mmse_shrinkage,
+)
+from .metric import pll_snr_median, robust_sigma
 
 # ========== 配置结构 ==========
 @dataclass
@@ -138,7 +139,7 @@ class DD_CPE_PLL:
         s = np.asarray(const).ravel()
         if hard is None:
             # 依赖你已有的 _qpsk_hard
-            from .batch import _qpsk_hard
+            from .demodulate import _qpsk_hard
             hard = _qpsk_hard(s)
 
         e = np.angle(np.vdot(hard, s * np.exp(-1j * self.theta)))
@@ -212,7 +213,7 @@ class OFDMSoftDecoder:
         """
         Hf_pilot = evaluate_H_f(pilots_td, pilots_fd=pilot_ref_fd)  # [num_pilot, N]
         # 你已有的全局估计接口（保持一致）
-        from .batch import estimate_drift_and_origin
+        from .channel_estimate import estimate_drift_and_origin
         d0, p0, origin = estimate_drift_and_origin(Hf_pilot, N=self.cfg.N, symbol_len=self.symbol_len)
         self.origin_Hf = Hf_pilot[-1]
         self.delta = float(d0)
@@ -592,3 +593,56 @@ class OFDMSoftDecoder:
     def get_guard_events(self) -> list[dict]:
         """返回每次发生替换时的详细记录（含 message）。"""
         return list(self._guard_events)
+
+
+# ========= Standalone PLL functions =========
+
+def apply_cpe_pll_sequence(constellations: np.ndarray,
+                           snr_med_db: np.ndarray,
+                           *,
+                           alpha: float = 0.15,
+                           snr_th_db: float = 6.0,
+                           alpha_min: float = 0.05,
+                           alpha_max: float = 0.30,
+                           snr_th_min_db: float = 3.0,
+                           snr_th_max_db: float = 10.0,
+                           beta: float = 0.9,
+                           snr_mid_db: float = 6.0,
+                           snr_scale: float = 4.0) -> np.ndarray:
+    """Apply DD_CPE_PLL sequentially to constellation array [n_sym, Nd]."""
+    import numpy as np
+    constellations = np.asarray(constellations)
+    snr_med_db = np.asarray(snr_med_db).reshape(-1,)
+    assert constellations.ndim == 2 and constellations.shape[0] == snr_med_db.size
+    pll_cfg = PLLConfig(alpha=alpha, snr_th_db=snr_th_db,
+                        alpha_min=alpha_min, alpha_max=alpha_max,
+                        snr_th_min_db=snr_th_min_db, snr_th_max_db=snr_th_max_db,
+                        beta=beta, snr_mid_db=snr_mid_db, snr_scale=snr_scale)
+    pll = DD_CPE_PLL(pll_cfg)
+    out = np.empty_like(constellations)
+    for i in range(constellations.shape[0]):
+        out[i] = pll.step(constellations[i], float(snr_med_db[i]))
+    return out
+
+
+def dd_cpe_pll_apply(constellations: np.ndarray,
+                     snr_med_db: np.ndarray,
+                     *, alpha: float = 0.15,
+                     snr_th_db: float = 6.0) -> np.ndarray:
+    """Decision-directed CPE first-order PLL (vectorized). constellations: [n,Nd] or [Nd]."""
+    import numpy as np
+    from .demodulate import _qpsk_hard
+    s = np.asarray(constellations)
+    if s.ndim == 1:
+        s2 = s[None, :]
+        snr = np.asarray(snr_med_db).reshape(1,)
+    else:
+        s2 = s
+        snr = np.asarray(snr_med_db).reshape(-1,)
+    hard = _qpsk_hard(s2)
+    num = np.sum(s2 * np.conj(hard), axis=1)
+    phi = -np.angle(num)
+    mask = (snr >= snr_th_db).astype(float)[:, None]
+    rot = np.exp(1j * (alpha * phi)[:, None] * mask)
+    out = s2 * rot
+    return out if s.ndim == 2 else out[0]

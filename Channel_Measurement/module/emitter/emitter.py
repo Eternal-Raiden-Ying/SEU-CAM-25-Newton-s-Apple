@@ -11,10 +11,10 @@ from pathlib import Path
 from ..utils.modulate import (
     generate_chirp, QPSK_mapping, OFDM_modulate_data,
     OFDM_modulate_data_with_comb, ofdm_modulate_symbol,
+    generate_pilot_symbol,
 )
 from ..utils.encode import ldpc_encode_bits, scramble_bits
 from ..utils.io_interface import get_bits_from_file, num_to_bits_msb, ascii3_to_24bits
-from ..utils.batch import generate_pilot_symbol
 
 
 def emitter(

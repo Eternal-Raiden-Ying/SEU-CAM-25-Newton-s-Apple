@@ -18,7 +18,7 @@ from .decode import *
 from .math_process import *
 from .modulate import *
 from .encode import *
-from .batch import *
+from .channel_estimate import *
 from .synchronize import *
 from .io_interface import *
 from .print_aid import *

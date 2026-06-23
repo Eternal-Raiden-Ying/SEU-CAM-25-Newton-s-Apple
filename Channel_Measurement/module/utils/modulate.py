@@ -285,6 +285,35 @@ def ofdm_modulate_symbol(symbol_freq: np.ndarray, cp_len: int = 1024) -> np.ndar
     return np.real(np.concatenate([td[-cp_len:], td]))
 
 
+# ── Pilot generation ──
+
+def generate_pilot_symbol(N: int, seed: int) -> np.ndarray:
+    """Generate one OFDM pilot symbol (frequency domain, conjugate-symmetric, unit DC/Nyquist)."""
+    rng = np.random.default_rng(seed)
+    half = N // 2
+    re = rng.choice([-1, 1], size=half - 1)
+    im = rng.choice([-1, 1], size=half - 1)
+    X_half = (re + 1j * im) / np.sqrt(2)
+    X = np.zeros(N, dtype=complex)
+    X[1:half] = X_half
+    X[half + 1:] = np.conj(X_half[::-1])
+    return X
+
+
+def generate_comb_pilot_symbol(N: int, seed: int) -> np.ndarray:
+    """Alias for generate_pilot_symbol — kept for backward compatibility."""
+    return generate_pilot_symbol(N, seed)
+
+
+def generate_pilot_combed_symbol(
+    N: int, seed: int = 256, iterations: int = 10,
+    num_of_data_symbols: int = 50, block_size: int = 4,
+) -> np.ndarray:
+    """Generate concatenated comb pilot sequence (1D) for OFDM_modulate_data_with_comb."""
+    n_pilots = int(np.ceil(num_of_data_symbols / iterations)) * block_size
+    return np.concatenate([generate_pilot_symbol(N, seed + i) for i in range(n_pilots)])
+
+
 def OFDM_modulate_data_with_comb(
     symbols: np.ndarray,
     N: int,
@@ -304,8 +333,6 @@ def OFDM_modulate_data_with_comb(
       with_cp_real: 1D real time-domain waveform
       freq_with_pilot: 2D frequency-domain matrix (data + comb pilots)
     """
-    from .batch import generate_pilot_symbol  # lazy import, no circular dep
-
     pos_cnt = N // 2 - 1
     data_bins = pos_cnt - data_start - data_tail
     if data_bins <= 0:

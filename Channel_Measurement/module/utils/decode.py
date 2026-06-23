@@ -175,3 +175,67 @@ def ldpc_decode_blocks(*,
 
 
     return decoded_info, it, syn
+
+
+# ========= LLR computation =========
+
+def llr_from_constellation(constellations: np.ndarray,
+                           *, mod: str = "QPSK",
+                           llr_clip: float = 20.0,
+                           clockwise: bool = False):
+    """QPSK approximate LLRs (vectorized, clockwise-configurable). Returns [n, Nd*2] and per-SC SNR dict."""
+    import numpy as np
+    from .demodulate import _qpsk_hard
+    from .metric import _mad_sigma
+
+    s = np.asarray(constellations)
+    squeeze_back = False
+    if s.ndim == 1:
+        s = s[None, :]
+        squeeze_back = True
+
+    hard = _qpsk_hard(s)
+    err = s - hard
+    sig_r = _mad_sigma(err.real, axis=-1) + 1e-9
+    sig_i = _mad_sigma(err.imag, axis=-1) + 1e-9
+    var_r = (sig_r ** 2)[:, None]
+    var_i = (sig_i ** 2)[:, None]
+
+    if clockwise:
+        L0 = 2.0 * s.real / var_r
+        L1 = 2.0 * s.imag / var_i
+    else:
+        L0 = 2.0 * s.imag / var_i
+        L1 = 2.0 * s.real / var_r
+
+    L0 = np.clip(L0, -llr_clip, llr_clip)
+    L1 = np.clip(L1, -llr_clip, llr_clip)
+    llr = np.stack([L0, L1], axis=-1).reshape(s.shape[0], -1).astype(np.float32)
+
+    ev = np.mean(np.abs(err) ** 2, axis=0, keepdims=True) + 1e-12
+    snr_db_per_sc = 10 * np.log10(1.0 / ev)
+    return (llr if not squeeze_back else llr), {"snr_db_per_sc": np.repeat(snr_db_per_sc, s.shape[0], axis=0)}
+
+
+def llr_scale_by_snr(snr_db_per_sc: np.ndarray,
+                     *, lo: float = 2.0, hi: float = 10.0,
+                     min_scale: float = 0.4, max_scale: float = 1.0) -> np.ndarray:
+    """Map per-SC SNR(dB) to linear scale factor in [min_scale, max_scale]."""
+    x = np.clip((snr_db_per_sc - lo) / max(1e-6, hi - lo), 0.0, 1.0)
+    return min_scale + x * (max_scale - min_scale)
+
+
+def pack_llr_blocks(ofdm_idx: np.ndarray,
+                    sub_carr_freq: np.ndarray,
+                    llr: np.ndarray,
+                    Ncw: int):
+    """Pack flat LLRs, OFDM indices, and subcarrier frequencies into codeword-sized blocks."""
+    import numpy as np
+    n_codeword = llr.size // Ncw
+    llr = llr.flatten()[:n_codeword * Ncw].reshape(-1, Ncw)
+    nc, N = llr.shape
+    assert ofdm_idx.size >= llr.size
+    assert sub_carr_freq.size >= llr.size
+    flat_ofdm = ofdm_idx.reshape(-1).astype(np.int32)[:nc * N]
+    flat_freq = sub_carr_freq.reshape(-1).astype(np.float32)[:nc * N]
+    return {'llr': llr, 'ofdm_idx': flat_ofdm.reshape(nc, N), 'sc_freq': flat_freq.reshape(nc, N)}

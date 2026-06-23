@@ -144,17 +144,43 @@ def get_bytes(binary_data: np.ndarray, bitorder='big'):
         raise RuntimeError
 
 
-def evaluate_H_f(known_symbols: np.ndarray, pilot_signals: np.ndarray):
-    """
-        evaluate H(f) by pilot signals (when several is given, H is calculated through average)
-    :param known_symbols: symbol extracted from received pilot signal (exclude CP)
-    :param pilot_signals: original pilot signal (include the conjugate part)
-    :return:
-    """
+# (old evaluate_H_f removed — superseded by channel_estimate.evaluate_H_f)
 
-    Y_f = np.fft.fft(known_symbols, axis=-1)
-    H_f = Y_f/pilot_signals if Y_f.ndim == 1 else (Y_f/pilot_signals).mean(axis=0)
-    return H_f
+
+def mmse_shrinkage(constellations: np.ndarray,
+                   Habs2: np.ndarray,
+                   sigmas: dict[str, np.ndarray]) -> np.ndarray:
+    """MMSE shrinkage: shrink constellations by H^2/(H^2+N0). Supports [Nd] or [B,Nd]."""
+    s = np.asarray(constellations)
+    s2d = s.ndim == 2
+    if not s2d:
+        s = s[None, :]
+    B, Nd = s.shape
+
+    def to_2d(a):
+        a = np.asarray(a)
+        if a.ndim == 0:
+            return np.full((B, Nd), float(a), dtype=float)
+        if a.ndim == 1:
+            if a.shape[0] == Nd:
+                return np.broadcast_to(a[None, :], (B, Nd)).astype(float, copy=False)
+            if a.shape[0] == B:
+                return np.broadcast_to(a[:, None], (B, Nd)).astype(float, copy=False)
+            raise ValueError(f"Shape {a.shape} incompatible with (B={B}, Nd={Nd})")
+        if a.ndim == 2:
+            if a.shape in ((B, Nd), (1, Nd), (B, 1)):
+                return np.broadcast_to(a, (B, Nd)).astype(float, copy=False) if a.shape != (B, Nd) else a.astype(float, copy=False)
+        raise ValueError(f"Unsupported ndim={a.ndim}, shape={a.shape}")
+
+    H2 = to_2d(Habs2)
+    sigR = to_2d(sigmas["sigma_r"])
+    sigI = to_2d(sigmas["sigma_i"])
+    N0 = 0.5 * (sigR ** 2 + sigI ** 2)
+    H2 = np.clip(H2, 1e-12, None)
+    N0 = np.clip(N0, 1e-12, None)
+    shrink = H2 / (H2 + N0)
+    out = s * shrink
+    return out if s2d else out[0]
 
 
 
