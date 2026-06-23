@@ -90,10 +90,18 @@ def ascii3_to_24bits(s3: str) -> np.ndarray:
 def emitter_cfg_to_fname(cfg, suffix: str = ".npy") -> str:
     """
     Build a parameter-encoded filename from an EmitterConfig.
-    Example: tx_N8192_cp1024_S8standard_R1-2_Z81_noscr.npy
+    Format: tx_fs{Fs}_N{N}_cp{CP}_d{start}-{tail}_S8{pilot}_R{rate}_Z{z}_{scram}{comb}.npy
+    Example: tx_fs48000_N8192_cp1024_d204-819_S8standard_R1-2_Z81_noscr.npy
     """
-    scram = f"scr{cfg.scrambler_seed}" if cfg.use_scrambler else "noscr"
+    if cfg.use_scrambler:
+        mode_char = cfg.scrambler.mode[0]  # 'r' for random, 'L' for LFSR
+        scram = f"scr{cfg.scrambler_seed}{mode_char}"
+    else:
+        scram = "noscr"
     comb = "_comb" if cfg.use_comb else ""
     rate_str = cfg.ldpc_rate.replace("/", "-")
-    return (f"tx_N{cfg.N}_cp{cfg.cp_len}_S8{cfg.pilot_mode}"
+    ds = cfg.data_start
+    dt = cfg.data_tail
+    return (f"tx_fs{cfg.fs}_N{cfg.N}_cp{cfg.cp_len}"
+            f"_d{ds}-{dt}_S8{cfg.pilot_mode}"
             f"_R{rate_str}_Z{cfg.ldpc_z}_{scram}{comb}{suffix}")
