@@ -48,7 +48,7 @@ def make_args(**overrides):
         suffix_map={v: k for k, v in SUFFIX_MAP.items()},
         data_start=DATA_START, data_tail=DATA_TAIL,
         use_comb=False, INTERVAL=None, COMB_PILOT_SEED_BASE=128,
-        edge_expand=32, max_pseudo_iter=20,
+        edge_expand=32, max_pseudo_iter=20, first_try_portion=1.0,
         groundtruth=False, tx_file_path=None,
         use_scrambler=False, scrambler_seed=256, scrambler_mode='random',
         scrambler_bitwidth=None,
@@ -258,25 +258,17 @@ def main():
         decoded, info = receiver(tx_wf.astype(np.float64), pilots_fd, args)
         rx_time = time.time() - t0
 
-        # Extract payload
-        type_bit = decoded[:24]
-        size_bits = decoded[24:64]
-        file_bits = 0
-        for b in size_bits: file_bits = (file_bits << 1) | int(b)
-        payload = decoded[64:64 + file_bits]
-        out_bytes = np.packbits(payload.flatten()).tobytes()
-        # Compare up to min length (last OFDM symbol may be partially unsolved)
-        min_len = min(len(out_bytes), len(original))
-        match = (out_bytes[:min_len] == original[:min_len])
-        match_pct = 100.0 * min_len / max(len(out_bytes), len(original))
-        out_hash = hashlib.sha256(out_bytes[:min_len]).hexdigest()[:16]
+        # decoded is ALREADY payload (receiver strips the 64-bit header)
+        out_bytes = np.packbits(decoded.flatten()).tobytes()
+        match = (out_bytes == original)
+        out_hash = hashlib.sha256(out_bytes).hexdigest()[:16]
 
         suffix = meta['file_type']
         out_path = OUTPUT_DIR / f"e2e_{fname.replace('.npy','')}.{suffix}"
         with open(out_path, 'wb') as f:
             f.write(out_bytes)
 
-        status = "OK" if match else f"PARTIAL ({match_pct:.0f}%)"
+        status = "OK" if match else f"MISMATCH"
         print(f"  RX: iter={info['ldpc_iter']}, payload={len(out_bytes)}B (orig={len(original)}B), "
               f"match={match}, type={info.get('type_suffix','?')}")
         print(f"  [{status}] tx={tx_time:.1f}s rx={rx_time:.1f}s -> {out_path.name}")
