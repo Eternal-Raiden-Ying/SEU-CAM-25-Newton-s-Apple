@@ -5,7 +5,7 @@
 # Not yet feature-complete; kept for reference and future development.
 from __future__ import annotations
 import numpy as np
-import argparse
+
 from matplotlib import pyplot as plt
 
 from ..utils.print_aid import print_padded, print_dict_values
@@ -34,47 +34,47 @@ from ..utils.demodulate import mmse_shrinkage
 from ..utils.decoder_oop import apply_cpe_pll_sequence
 
 
-def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
+def receiver(rx: np.ndarray, pilot: np.ndarray, cfg):
     """
     入口：
         rx:    1D 复数数组（整段时域，含 chirp + pilot + data/comb）
         pilot: [num_pilot, N] 的频域参考导频
-        args:  argparse.Namespace，字段参见下方读取
+        cfg:   ReceiverConfig dataclass (module.cfg.config)
     返回：
         decoded_bits_scr: 最终解码后再加扰的比特流（含 64bit 头）
         info:              统计信息字典
     """
     # ---------------- 基本参数 ----------------
-    fs              = args.fs
-    N               = args.N
-    cp_len          = args.cp_len
-    num_pilot       = args.num_pilot
-    chirp_len       = args.chirp_len
-    chirp_l         = args.chirp_l
-    chirp_h         = args.chirp_h
-    clockwise       = args.clockwise
-    data_start      = args.data_start
-    data_tail       = args.data_tail
-    INTERVAL       = args.INTERVAL
-    comb_seed_base  = args.COMB_PILOT_SEED_BASE
+    fs              = cfg.fs
+    N               = cfg.N
+    cp_len          = cfg.cp_len
+    num_pilot       = cfg.num_pilot
+    chirp_len       = cfg.chirp_len
+    chirp_l         = cfg.chirp_l
+    chirp_h         = cfg.chirp_h
+    clockwise       = cfg.clockwise
+    data_start      = cfg.data_start
+    data_tail       = cfg.data_tail
+    INTERVAL       = cfg.INTERVAL
+    comb_seed_base  = cfg.COMB_PILOT_SEED_BASE
 
-    groundtruth     = args.groundtruth
-    tx_file_path    = getattr(args, "tx_file_path", None)
-    head_bit        = args.head_bit
+    groundtruth     = cfg.groundtruth
+    tx_file_path    = cfg.tx_file_path
+    head_bit        = cfg.head_bit
 
     # modulate
-    scr_seed        = args.scrambler_seed
-    scr_mode        = args.scrambler_mode
-    scr_bitwidth    = args.scrambler_bitwidth
+    scr_seed        = cfg.scrambler_seed
+    scr_mode        = cfg.scrambler_mode
+    scr_bitwidth    = cfg.scrambler_bitwidth
 
     # PLOT
-    plot            = args.plot
-    plot_opt        = args.plot_opt
+    plot            = cfg.plot
+    plot_opt        = cfg.plot_opt
 
     # PRINT
-    print_flag      = getattr(args, 'print_flag', False)
-    print_len       = getattr(args, 'print_len', 64)
-    print_pad       = getattr(args, 'print_pad', '-')
+    print_flag      = cfg.print_flag
+    print_len       = cfg.print_len
+    print_pad       = cfg.print_pad
 
     symbol_len = N + cp_len
     POS_BINS   = np.arange(1, N//2)
@@ -82,10 +82,10 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
     Nd         = DATA_BINS.size
 
     code = ldpc_make_code(
-        standard=args.ldpc_standard, rate=args.ldpc_rate, z=args.ldpc_z, ptype=args.ldpc_ptype,
-        device=args.ldpc_device, llr_clip=args.ldpc_llr_clip, max_iter=args.ldpc_max_iter,
-        verbose=args.ldpc_verbose, log_every=args.ldpc_log_every, check_every=args.ldpc_check_every,
-        microbatch=args.ldpc_microbatch, print_iter=args.ldpc_print_iter
+        standard=cfg.ldpc_standard, rate=cfg.ldpc_rate, z=cfg.ldpc_z, ptype=cfg.ldpc_ptype,
+        device=cfg.ldpc_device, llr_clip=cfg.ldpc_llr_clip, max_iter=cfg.ldpc_max_iter,
+        verbose=cfg.ldpc_verbose, log_every=cfg.ldpc_log_every, check_every=cfg.ldpc_check_every,
+        microbatch=cfg.ldpc_microbatch, print_iter=cfg.ldpc_print_iter
     )
 
     # ---------------- 0) 时域同步（scipy.signal.correlate） ----------------
@@ -116,13 +116,13 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
     )
 
     cfg = DecoderConfig(
-        N=args.N, cp_len=args.cp_len, DATA_BINS=DATA_BINS,
-        pll_cfg=PLLConfig(alpha=args.pll_alpha, snr_th_db=args.pll_snr_th_db,
-                        alpha_min=args.pll_alpha_min, alpha_max=args.pll_alpha_max,
-                        snr_th_min_db=args.pll_snr_th_min_db, snr_th_max_db=args.pll_snr_th_max_db,
-                        beta=args.pll_beta, snr_mid_db=args.pll_snr_mid_db, snr_scale=args.pll_snr_scale),
-        sigma_cfg=SigmaTrackerConfig(per_sc=args.sig_trk_per_sc, init_sigma=args.sig_trk_init_sigma,
-                                     alpha_max=args.sig_trk_alpha_max, alpha_min=args.sig_trk_alpha_min),
+        N=cfg.N, cp_len=cfg.cp_len, DATA_BINS=DATA_BINS,
+        pll_cfg=PLLConfig(alpha=cfg.pll_alpha, snr_th_db=cfg.pll_snr_th_db,
+                        alpha_min=cfg.pll_alpha_min, alpha_max=cfg.pll_alpha_max,
+                        snr_th_min_db=cfg.pll_snr_th_min_db, snr_th_max_db=cfg.pll_snr_th_max_db,
+                        beta=cfg.pll_beta, snr_mid_db=cfg.pll_snr_mid_db, snr_scale=cfg.pll_snr_scale),
+        sigma_cfg=SigmaTrackerConfig(per_sc=cfg.sig_trk_per_sc, init_sigma=cfg.sig_trk_init_sigma,
+                                     alpha_max=cfg.sig_trk_alpha_max, alpha_min=cfg.sig_trk_alpha_min),
     )
     dec = OFDMSoftDecoder(cfg)
     dec.init_from_preamble(sym_pilot_td, pilot)
@@ -222,15 +222,15 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
         pll_snr_med_T = pll_snr_median(const_zf_T)
         const_pll_T = apply_cpe_pll_sequence(
             const_zf_T, pll_snr_med_T,
-            alpha=getattr(args, "pll_alpha", 0.15),
-            snr_th_db=getattr(args, "pll_snr_th_db", 6.0),
-            alpha_min=getattr(args, "pll_alpha_min", 0.05),
-            alpha_max=getattr(args, "pll_alpha_max", 0.50),
-            snr_th_min_db=getattr(args, "pll_snr_min_db", 3.0),
-            snr_th_max_db=getattr(args, "pll_snr_max_db", 10.0),
-            beta=getattr(args, "pll_beta", 0.9),
-            snr_mid_db=getattr(args, "pll_snr_mid_db", 6.0),
-            snr_scale=getattr(args, "pll_snr_scale", 4.0),
+            alpha=cfg.pll_alpha,
+            snr_th_db=cfg.pll_snr_th_db,
+            alpha_min=cfg.pll_alpha_min,
+            alpha_max=cfg.pll_alpha_max,
+            snr_th_min_db=cfg.pll_snr_min_db,
+            snr_th_max_db=cfg.pll_snr_max_db,
+            beta=cfg.pll_beta,
+            snr_mid_db=cfg.pll_snr_mid_db,
+            snr_scale=cfg.pll_snr_scale,
         )
         # 噪声/收缩
         sigmas_T = robust_sigma(const_pll_T)
@@ -238,7 +238,7 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
         const_mmse_T = mmse_shrinkage(const_pll_T, Habs2_T, sigmas_T)
 
         # LLR + 按 per-SC SNR(dB) 缩放
-        llr_raw_T, stat_T = llr_from_constellation(const_mmse_T, llr_clip=args.ldpc_llr_clip, clockwise=clockwise)
+        llr_raw_T, stat_T = llr_from_constellation(const_mmse_T, llr_clip=cfg.ldpc_llr_clip, clockwise=clockwise)
         scale_sc_T = llr_scale_by_snr(stat_T["snr_db_per_sc"], lo=2.0, hi=10.0, min_scale=0.4, max_scale=1.0)
         llr_scaled_T = (llr_raw_T.reshape(-1, Nd, 2) * scale_sc_T[:, :, None]).reshape(-1, Nd*2)
 
@@ -318,7 +318,7 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
         print("accepted dlt :", hist["delta"])
         print("accepted phi :", hist["phi"])
 
-    llr_raw, stat = llr_from_constellation(const, llr_clip=args.ldpc_llr_clip, clockwise=args.clockwise)
+    llr_raw, stat = llr_from_constellation(const, llr_clip=cfg.ldpc_llr_clip, clockwise=cfg.clockwise)
     scale_sc = llr_scale_by_snr(stat["snr_db_per_sc"], lo=2.0, hi=10.0, min_scale=0.4, max_scale=1.0)
     llr_scaled = (llr_raw.reshape(const.shape[0], -1, 2) * scale_sc[:, :, None]).reshape(const.shape[0], -1)
 
@@ -333,7 +333,7 @@ def receiver(rx: np.ndarray, pilot: np.ndarray, args: argparse.Namespace):
         code=code,
         groundtruth_bits=gt_bits_scr if groundtruth else None,
         head_bytes=head_bit//8,  # 64bit 头
-        batch=args.ldpc_batch
+        batch=cfg.ldpc_batch
     )
 
     if plot and plot_opt['BER_show']:

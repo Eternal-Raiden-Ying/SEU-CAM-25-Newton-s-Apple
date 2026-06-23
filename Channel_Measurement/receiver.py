@@ -1,10 +1,10 @@
 import os
-import argparse
-import soundfile as sf
 import numpy as np
+import soundfile as sf
+
 from module.receiver.receiver_stable import receiver
 from module.receiver.receiver_oop_dev import receiver as receiver_oop
-
+from module.cfg.config import ReceiverConfig, OFDMConfig, ChirpConfig, HeaderConfig, ScramblerConfig, LDPCConfig
 
 project_dir = r"D:\Documents\Coding\Python\SEUCAM"
 output_dir = os.path.join(project_dir, "Channel_Measurement/output/ldpc")
@@ -14,117 +14,50 @@ save_dir = os.path.join(project_dir, "Channel_Measurement/save")
 
 if __name__ == "__main__":
     assert os.path.exists(project_dir), "specify your proj dir"
-    dirs = [output_dir, record_dir, data_dir]
-    for dir_name in dirs:
-        if not os.path.exists(dir_name):
-            os.makedirs(dir_name)
+    for d in [output_dir, record_dir, data_dir]:
+        os.makedirs(d, exist_ok=True)
 
-    rx_pth = os.path.join(record_dir, "LDPC", "temp",
-                          "[zrh]rx.wav")
+    rx_pth = os.path.join(record_dir, "LDPC", "temp", "[zrh]rx.wav")
     pilot_pth = os.path.join(save_dir, "pilot", "pilot_STANDARD_freq_domain.npy")
     tx_file_path = os.path.join(data_dir, "answer.tiff")
-    # rx_pth = r"D:\Documents\Coding\Python\SEUCAM\Channel_Measurement\test.npy"
 
-    plot_opt = {
-        'correlation':                      False,
-        'impulse_response':                 False,
-        'raw_pilot_constellation':          False,
-        'corrected_pilot_constellation':    False,
-        'data_constellation':               True,
-        'unwrap':                           False,
-        'received_signal':                  False,
-        'BER_show':                         True,
-        'snr_time_pilot':                   False,  # 导频阶段的平均 SNR(随符号)曲线
-        'snr_time_comb':                    False,
-        'snr_time_data':                    False,  # 数据阶段（判决导向统计）的 SNR(随符号)曲线
-        'snr_over_sc':                      False,  # 跨子载波的平均 SNR 曲线 (data symbol)
-        'freq_offset_interpolate':          False
-    }
-
-    print_opt = {
-        'pilot_metric':                     True,
-        'pilot_delta':                      False,
-        'data_metric':                      True,
-        'iter_verbose':                     True
-    }
-
-    suffix_map = {
-        "tif": "tiff",
-        "txt": "txt",
-        "jpg": "jpg",
-        "png": "png"
-    }
-
-    args = argparse.Namespace(
-        # basic param
-        fs=48000, N=8192, cp_len=1024,
-        num_pilot=8, clockwise=False,
-        chirp_len=2, chirp_l=10, chirp_h=24000,
-        # file type
-        head_bit=64, size_bit_w=40, type_bit_w=24, suffix_map={v: k for k, v in suffix_map.items()},
-        # chirp param
-        data_start=204, data_tail=819,
-        # comb param
-        use_comb=False, INTERVAL=None, COMB_PILOT_SEED_BASE=128,
-        # pseudo pilot strategy
-        edge_expand=32, max_pseudo_iter=20,
-        # groundtruth settings
-        groundtruth=False, tx_file_path=tx_file_path,
-        # scrambler param
-        use_scrambler=False, scrambler_seed=256, scrambler_mode='random', scrambler_bitwidth=None,
-        # ldpc param
-        ldpc_device="cuda", ldpc_batch=512,
-        ldpc_standard="802.11n", ldpc_rate="1/2", ldpc_z=81, ldpc_ptype="A", ldpc_microbatch=256,
-        ldpc_llr_clip=10.0, ldpc_max_iter=100,
-        ldpc_verbose=False, ldpc_print_iter=True, ldpc_log_every=1, ldpc_check_every=1,
-        # CPE PLL param
-        pll_alpha=0.15, pll_beta=0.9,
-        pll_alpha_min=0.05, pll_alpha_max=0.50,
-        pll_snr_th_db=6.0, pll_snr_scale=4.0,
-        pll_snr_th_min_db=3.0, pll_snr_mid_db=6.0, pll_snr_th_max_db=20.0,
-        # sigma tracker
-        sig_trk_per_sc=True, sig_trk_alpha_min=0.05, sig_trk_alpha_max=0.7, sig_trk_init_sigma=0.3,
-        # frequency offset interpolate
-        interp_mode='hold', interp_smooth=0.0,
-        # plot settings
-        plot=False, plot_opt=plot_opt,
-        # print settings
-        print_flag=True, print_opt=print_opt, print_len=64, print_pad='-'
+    # Build ReceiverConfig with production defaults
+    cfg = ReceiverConfig(
+        ofdm=OFDMConfig(),
+        chirp=ChirpConfig(),
+        header=HeaderConfig(),
+        scrambler=ScramblerConfig(),
+        ldpc=LDPCConfig(print_iter=True),
     )
 
-    # ---- 加载录音文件 ----
+    # ---- Load recording ----
     if rx_pth.endswith(".wav"):
-        # wav 文件读取
-        rx_raw, sr = sf.read(rx_pth)  # sr: 采样率
-        # 如果是立体声，取第1通道；否则直接使用
+        rx_raw, sr = sf.read(rx_pth)
         rx = rx_raw[:, 0] if rx_raw.ndim == 2 else rx_raw
         rx = rx.astype(np.float64)
-        print("已加载录音文件：", rx_pth)
-        print("采样率 fs =", sr)
+        print("Loaded recording:", rx_pth)
+        print("Sample rate fs =", sr)
     elif rx_pth.endswith(".npy"):
-        # npy 文件读取
-        rx = np.load(rx_pth).ravel()  # 原本逻辑保留
+        rx = np.load(rx_pth).ravel()
         if rx.dtype == np.int16:
             rx /= np.max(np.abs(rx))
-        print("已加载npy文件：", rx_pth)
+        print("Loaded npy file:", rx_pth)
     else:
-        raise ValueError(f"不支持的文件格式: {rx_pth}")
+        raise ValueError(f"Unsupported format: {rx_pth}")
 
     pilot = np.load(pilot_pth)
-    decoded_info, info = receiver(rx, pilot, args)
+    decoded_info, info = receiver(rx, pilot, cfg)
 
     print(f"ldpc iter: {info['ldpc_iter']}")
-    if args.groundtruth:
+    if cfg.groundtruth:
         print(f"post_ber: {info['post_ber']}")
 
-    bytes = np.packbits(decoded_info.flatten())
-    if getattr(args, 'type_bit_w', 0):
-        suffix_str = suffix_map[info['type_suffix']]
+    out_bytes = np.packbits(decoded_info.flatten())
+    if cfg.type_bit_w:
+        suffix_str = cfg.suffix_map[info['type_suffix']]
         output_filename = f'unknown.{suffix_str}'
     else:
         output_filename = 'unknown.tiff'
 
-    # 写入文件
     with open(os.path.join(output_dir, output_filename), 'wb') as file:
-        file.write(bytes.tobytes())
-
+        file.write(out_bytes.tobytes())

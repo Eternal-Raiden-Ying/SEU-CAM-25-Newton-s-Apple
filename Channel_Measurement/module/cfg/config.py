@@ -329,9 +329,13 @@ class ReceiverConfig:
     @property
     def pll_snr_th_min_db(self): return self.pll.snr_th_min_db
     @property
+    def pll_snr_min_db(self): return self.pll.snr_th_min_db  # legacy alias
+    @property
     def pll_snr_mid_db(self): return self.pll.snr_mid_db
     @property
     def pll_snr_th_max_db(self): return self.pll.snr_th_max_db
+    @property
+    def pll_snr_max_db(self): return self.pll.snr_th_max_db  # legacy alias
     @property
     def sig_trk_per_sc(self): return self.sigma.per_sc
     @property
