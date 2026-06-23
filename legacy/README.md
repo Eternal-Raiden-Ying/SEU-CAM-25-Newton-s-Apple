@@ -1,6 +1,6 @@
 # Legacy Code Archive
 
-Archived from the old `Channel Measurement/` codebase. These files are kept for reference only.
+Archived from the old codebase. These files are kept for reference only.
 
 ## Contents
 

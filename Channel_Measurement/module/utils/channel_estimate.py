@@ -30,11 +30,10 @@ def evaluate_H_f(symbols_td: np.ndarray,
     - pilots_fd : same dimensions
     Returns aligned with symbols_td.
     """
-    pilots_fd = np.where(pilots_fd == 0, np.nan, pilots_fd)
     X = np.asarray(symbols_td)
     assert pilots_fd is not None
     eps = 1e-6
-    pilots_fd = np.where(pilots_fd == 0.0, eps, pilots_fd)
+    pilots_fd = np.where(np.abs(pilots_fd) < eps, eps, pilots_fd)
     if X.ndim == 1:
         Yf = np.fft.fft(X)
         if DATA_BINS is None:
@@ -97,7 +96,8 @@ def estimate_drift_and_origin(Hf_seq: np.ndarray,
         DATA_BINS = np.arange(N)
     H = np.asarray(Hf_seq)
     assert H.ndim == 2
-    ratios = H[1::1] / H[:-1:1]
+    eps = 1e-6
+    ratios = H[1::1] / (H[:-1:1] + eps)
     xs, phases, slopes, intercepts, deltas, phis = [], [], [], [], [0], [0]
     for ratio in ratios:
         x_auto, auto_unwrapped_phase, _ = phase_unwrap_auto(data=ratio[DATA_BINS], DATA_BINS=DATA_BINS, N=N)
@@ -121,7 +121,7 @@ def estimate_drift_and_origin(Hf_seq: np.ndarray,
     origin = np.average(origin, axis=0)
 
     if mode == 'total':
-        ratio = np.mean(H[1:] / H[:-1], axis=0)[DATA_BINS]
+        ratio = np.mean(H[1:] / (H[:-1] + eps), axis=0)[DATA_BINS]
         x_auto, auto_unwrapped_phase, _ = phase_unwrap_auto(data=ratio, DATA_BINS=DATA_BINS, N=N)
         slope, intercept = fitting_line(x=x_auto, y=auto_unwrapped_phase, filter=True, residual_th=1.2)
         plot_args = {

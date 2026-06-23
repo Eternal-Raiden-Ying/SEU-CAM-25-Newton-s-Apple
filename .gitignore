@@ -1,6 +1,6 @@
-/Week1 Challenge/res/
-/Week1 Challenge/data/
-/Week1 Challenge/college.xls
+/Week1 Challenge/*
+!/Week1 Challenge/src/
+!/Week1 Challenge/src/*
 *.wav
 *.npy
 *.pyc
@@ -10,8 +10,8 @@ __pycache__/
 /Channel_Measurement/module/utils/ldpc_jossy/bin/
 /Channel_Measurement/data/*
 /Channel_Measurement/output/*
-/Channel_Measurement/assets/
 !/Channel_Measurement/assets/pilots/*
+/Channel_Measurement/assets/signals/
 !/Channel_Measurement/assets/signals/demo_signal.npy
 
 
