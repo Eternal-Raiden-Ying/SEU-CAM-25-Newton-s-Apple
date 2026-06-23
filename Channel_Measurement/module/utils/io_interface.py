@@ -111,66 +111,41 @@ def fname_to_emitter_cfg(fname: str):
     """
     Parse a parameter-encoded filename back into an EmitterConfig.
     Inverse of emitter_cfg_to_fname().
-    Accepts both old and new formats:
-      - New: tx_fs48000_N8192_cp1024_d204-819_S8standard_R1-2_Z81_noscr.npy
-      - Old: tx_N8192_cp1024_S8diff_R1-2_Z81_noscr.npy
+    Format: tx_fs{Fs}_N{N}_cp{CP}_d{start}-{tail}_S8{pilot}_R{rate}_Z{z}_{scram}{comb}.npy
 
     Returns an EmitterConfig with parsed values (defaults filled where absent).
     """
     import re
-    from ..cfg.config import EmitterConfig, OFDMConfig, ChirpConfig, HeaderConfig, ScramblerConfig, LDPCConfig
+    from ..cfg.config import EmitterConfig
 
     cfg = EmitterConfig()
-    basename = fname.replace("\\", "/").split("/")[-1]  # strip path
+    basename = fname.replace("\\", "/").split("/")[-1]
 
-    # fs
     m = re.search(r'fs(\d+)', basename)
-    if m:
-        cfg.ofdm.fs = int(m.group(1))
-
-    # N
+    if m: cfg.ofdm.fs = int(m.group(1))
     m = re.search(r'_N(\d+)', basename)
-    if m:
-        cfg.ofdm.N = int(m.group(1))
-
-    # cp
+    if m: cfg.ofdm.N = int(m.group(1))
     m = re.search(r'_cp(\d+)', basename)
-    if m:
-        cfg.ofdm.cp_len = int(m.group(1))
-
-    # data_start-tail
+    if m: cfg.ofdm.cp_len = int(m.group(1))
     m = re.search(r'_d(\d+)-(\d+)', basename)
     if m:
         cfg.ofdm.data_start = int(m.group(1))
         cfg.ofdm.data_tail = int(m.group(2))
-
-    # pilot mode
     m = re.search(r'_S8(\w+)_', basename)
-    if m:
-        cfg.pilot_mode = m.group(1)
-
-    # rate
+    if m: cfg.pilot_mode = m.group(1)
     m = re.search(r'_R(\d+-\d+)', basename)
-    if m:
-        cfg.ldpc.rate = m.group(1).replace("-", "/")
-
-    # Z
+    if m: cfg.ldpc.rate = m.group(1).replace("-", "/")
     m = re.search(r'_Z(\d+)', basename)
-    if m:
-        cfg.ldpc.z = int(m.group(1))
+    if m: cfg.ldpc.z = int(m.group(1))
 
-    # scrambler
     if '_noscr' in basename:
         cfg.scrambler.enabled = False
     else:
-        m = re.search(r'_scr(\d+)([rL])?', basename)  # mode char optional for old format
+        m = re.search(r'_scr(\d+)([rL])', basename)
         if m:
             cfg.scrambler.enabled = True
             cfg.scrambler.seed = int(m.group(1))
-            mode_map = {'r': 'random', 'L': 'LFSR'}
-            cfg.scrambler.mode = mode_map.get(m.group(2), 'random')  # default random
+            cfg.scrambler.mode = {'r': 'random', 'L': 'LFSR'}.get(m.group(2), 'random')
 
-    # comb
     cfg.comb_enabled = '_comb' in basename
-
     return cfg
