@@ -26,19 +26,16 @@ OUTPUT_DIR = PROJ / "Channel_Measurement" / "output" / "ldpc"
 for d in [SIGNALS_DIR, OUTPUT_DIR]:
     os.makedirs(d, exist_ok=True)
 
-SAMPLE_TXT = PROJ / "demo_sample.txt"
+DEMO_TXT = PROJ / "demo.txt"
 
 
 def main():
     # Determine input file
-    input_path = sys.argv[1] if len(sys.argv) > 1 else None
-    if input_path is None:
-        # Create sample file
-        sample = "Hello from SEUCAM OFDM codec!\nThis is a demo transmission.\n" * 50
-        SAMPLE_TXT.write_text(sample, encoding="utf-8")
-        input_path = str(SAMPLE_TXT)
-        print(f"Created sample: {SAMPLE_TXT} ({len(sample)} chars)")
-
+    input_path = sys.argv[1] if len(sys.argv) > 1 else str(DEMO_TXT)
+    if not Path(input_path).exists():
+        print(f"File not found: {input_path}")
+        print(f"Create a demo.txt or run: python demo.py <file>")
+        sys.exit(1)
     input_path = str(Path(input_path).resolve())
     original = Path(input_path).read_bytes()
     orig_hash = hashlib.sha256(original).hexdigest()[:16]
