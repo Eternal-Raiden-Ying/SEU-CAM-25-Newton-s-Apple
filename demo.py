@@ -41,9 +41,10 @@ def main():
     orig_hash = hashlib.sha256(original).hexdigest()[:16]
     print(f"Input: {input_path}  ({len(original)} bytes, sha256={orig_hash})")
 
-    # ── Encode (CPU-only, short chirps) ──
+    # ── Encode (CPU, short chirps, moderate iterations) ──
     tx_cfg = EmitterConfig(pilot_mode="standard")
     tx_cfg.ldpc.device = "cpu"
+    tx_cfg.ldpc.max_iter = 10
     print(f"Encoding: N={tx_cfg.N}, cp={tx_cfg.cp_len}, "
           f"chirp={tx_cfg.chirp.duration}s, pilot={tx_cfg.pilot_mode}, Z={tx_cfg.ldpc_z}")
 
@@ -55,9 +56,10 @@ def main():
     np.save(SIGNALS_DIR / fname, tx_wf)
     print(f"  TX: {len(tx_wf)} samples ({len(tx_wf)/48000:.1f}s) -> {fname}")
 
-    # ── Decode (CPU only) ──
+    # ── Decode (CPU only, moderate iterations) ──
     rx_cfg = ReceiverConfig()
     rx_cfg.ldpc.device = "cpu"
+    rx_cfg.ldpc.max_iter = 10
     t0 = time.time()
     decoded, info = receiver(tx_wf.astype(np.float64), pilots_fd, rx_cfg)
     rx_time = time.time() - t0
