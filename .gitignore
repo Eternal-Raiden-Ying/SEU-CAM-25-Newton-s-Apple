@@ -7,7 +7,6 @@
 *.pyo
 *.pyd
 __pycache__/
-/Channel Measurement/
 /Channel_Measurement/module/utils/ldpc_jossy/bin/
 /Channel_Measurement/module/utils/ldpc_jossy/data/
 /Channel_Measurement/module/utils/ldpc_jossy/src/
@@ -16,4 +15,4 @@ __pycache__/
 /Channel_Measurement/record/
 /Channel_Measurement/save/
 /Channel_Measurement/temp
-/repo-branches.svg
+
