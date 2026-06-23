@@ -17,7 +17,7 @@ from module.cfg.config import ReceiverConfig
 
 SIGNAL_PATH = _PROJ / "assets" / "signals" / "demo_signal.npy"
 PILOT_PATH  = _PROJ / "assets" / "pilots" / "pilot_STANDARD_freq_domain.npy"
-OUTPUT_DIR  = _PROJ / "output" / "ldpc"
+OUTPUT_PATH = _PROJ / "output" / "ldpc" / "demo_decoded.txt"
 
 
 def main():
@@ -33,14 +33,12 @@ def main():
     elapsed = time.time() - t0
 
     out_bytes = np.packbits(decoded.flatten()).tobytes()
-    suffix = info.get("type_suffix", "txt")
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
-    out_path = OUTPUT_DIR / f"demo_decoded.{suffix}"
-    with open(out_path, "wb") as f:
+    os.makedirs(OUTPUT_PATH.parent, exist_ok=True)
+    with open(str(OUTPUT_PATH), "wb") as f:
         f.write(out_bytes)
 
     print(f"Decoded: {len(out_bytes)}B, iter={info['ldpc_iter']}, {elapsed:.1f}s")
-    print(f"-> {out_path}")
+    print(f"-> {OUTPUT_PATH}")
 
 
 if __name__ == "__main__":
