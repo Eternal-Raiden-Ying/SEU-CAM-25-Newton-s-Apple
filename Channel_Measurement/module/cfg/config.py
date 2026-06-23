@@ -71,7 +71,7 @@ class LDPCConfig:
     rate: str = '1/2'
     z: int = 81
     ptype: str = 'A'
-    device: str = 'cpu'
+    device: str = 'gpu'
     batch: int = 512
     microbatch: int = 256
     llr_clip: float = 10.0
