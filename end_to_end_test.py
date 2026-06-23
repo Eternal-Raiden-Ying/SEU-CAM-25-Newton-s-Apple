@@ -1,9 +1,8 @@
 """
 End-to-end codec test: emitter -> direct decode (no channel).
+Uses module.emitter.emitter() and module.receiver.receiver_stable.receiver().
 Generates waveforms with different parameters, decodes,
 verifies output matches original answer.tiff.
-Saves waveforms with parameter-encoded filenames.
-Uses module/utils/ for all shared functions.
 """
 import os, sys, io, hashlib, time, argparse
 import numpy as np
@@ -15,13 +14,8 @@ PROJ = Path(__file__).resolve().parent
 sys.path.insert(0, str(PROJ / "Channel_Measurement"))
 sys.path.insert(0, str(PROJ / "Channel_Measurement" / "module" / "utils" / "ldpc_jossy" / "py"))
 
+from module.emitter import emitter
 from module.receiver.receiver_stable import receiver
-from module.utils.encode import ldpc_encode_bits, ldpc_make_code, scramble_bits
-from module.utils.modulate import (
-    QPSK_mapping, generate_chirp, OFDM_modulate_data, random_qpsk_matrix,
-)
-from module.utils.io_interface import get_bits_from_file, num_to_bits_msb, ascii3_to_24bits
-from module.utils.batch import generate_pilot_symbol
 
 # ── Paths ──
 SAVE_DIR = PROJ / "Channel_Measurement" / "save" / "signal"
@@ -34,19 +28,33 @@ assert INPUT_FILE.exists(), f"Input: {INPUT_FILE}"
 
 # ── Fixed params ──
 FS, N_FFT, CP_LEN, NUM_PILOT = 48000, 8192, 1024, 8
-SYM_LEN = N_FFT + CP_LEN
-DATA_START, DATA_TAIL = 204, 819
 SUFFIX_MAP = {"tif": "tiff", "txt": "txt", "jpg": "jpg", "png": "png"}
 
 
-def make_args(**overrides):
-    """Build receiver args Namespace with defaults matching receiver.py."""
+def make_emitter_args(**overrides):
+    """Build emitter args with defaults, apply overrides."""
+    defaults = dict(
+        fs=FS, N=N_FFT, cp_len=CP_LEN, num_pilot=NUM_PILOT,
+        chirp_len=2, chirp_l=10, chirp_h=24000, chirp_two=True,
+        head_bit=64, size_bit_w=40, type_bit_w=24,
+        use_scrambler=False, scrambler_seed=256, scrambler_mode='random',
+        ldpc_standard='802.11n', ldpc_rate='1/2', ldpc_z=81, ldpc_ptype='A',
+        use_comb=False, comb_iter=10, comb_seed=128,
+        data_start=204, data_tail=819, fill_seed=2025,
+        pilot_mode='standard',
+    )
+    defaults.update(overrides)
+    return argparse.Namespace(**defaults)
+
+
+def make_receiver_args(**overrides):
+    """Build receiver args with defaults matching receiver.py."""
     defaults = dict(
         fs=FS, N=N_FFT, cp_len=CP_LEN, num_pilot=NUM_PILOT, clockwise=False,
         chirp_len=2, chirp_l=10, chirp_h=24000,
         head_bit=64, size_bit_w=40, type_bit_w=24,
         suffix_map={v: k for k, v in SUFFIX_MAP.items()},
-        data_start=DATA_START, data_tail=DATA_TAIL,
+        data_start=204, data_tail=819,
         use_comb=False, INTERVAL=None, COMB_PILOT_SEED_BASE=128,
         edge_expand=32, max_pseudo_iter=20,
         groundtruth=False, tx_file_path=None,
@@ -80,89 +88,19 @@ def make_args(**overrides):
     return argparse.Namespace(**defaults)
 
 
-def ofdm_modulate_pilot(pilot_fd: np.ndarray) -> np.ndarray:
-    """IFFT + CP for one pilot symbol. Returns real time-domain."""
-    td = np.fft.ifft(pilot_fd)
-    return np.real(np.concatenate([td[-CP_LEN:], td]))
-
-
-def build_tx(file_path: Path, pilot_mode: str, use_scrambler: bool,
-             scrambler_seed: int, Z: int, rate: str = "1/2"):
-    """
-    Build complete transmit waveform using module functions.
-    Returns: (tx_waveform, pilots_fd, meta_dict)
-    """
-    # ── Chirps ──
-    chirp_front = generate_chirp(FS, duration=2, f_l=10, f_h=24000) * 0.4
-    chirp_tail  = generate_chirp(FS, duration=2, f_l=20, f_h=18000) * 0.4
-
-    # ── Pilot preamble ──
-    if pilot_mode == "standard":
-        std_path = PROJ / "Channel_Measurement" / "save" / "pilot" / "pilot_STANDARD_freq_domain.npy"
-        pilots_fd = np.load(std_path) if std_path.exists() else np.array(
-            [generate_pilot_symbol(N_FFT, 256 + i) for i in range(NUM_PILOT)])
-    elif pilot_mode == "different":
-        pilots_fd = np.array([generate_pilot_symbol(N_FFT, 256 + i) for i in range(NUM_PILOT)])
-    else:  # "same"
-        p = generate_pilot_symbol(N_FFT, 256)
-        pilots_fd = np.array([p] * NUM_PILOT)
-
-    tx_preamble = np.concatenate([ofdm_modulate_pilot(p) for p in pilots_fd])
-    tx_preamble /= np.max(np.abs(tx_preamble))
-
-    # ── Read file + header ──
-    bits = get_bits_from_file(str(file_path))
-    ext = file_path.suffix.lower()
-    type_map = {'.txt': 'txt', '.tif': 'tif', '.tiff': 'tif', '.png': 'png'}
-    file_type = type_map.get(ext, 'bin')
-
-    hdr_type = ascii3_to_24bits(file_type)
-    hdr_size = num_to_bits_msb(len(bits), bit_num=40)
-    header = np.concatenate([hdr_type, hdr_size])
-    bits = np.concatenate([header, bits]).astype(np.uint8)
-
-    # ── Scrambler ──
-    if use_scrambler:
-        bits = scramble_bits(bits, seed=scrambler_seed, mode='random')
-
-    # ── LDPC encode ──
-    code = ldpc_make_code(standard='802.11n', rate=rate, z=Z, ptype='A',
-                          device='cuda', llr_clip=10.0, max_iter=100,
-                          verbose=False, log_every=1, check_every=1)
-    ldpc_bits, (K, Ncw) = ldpc_encode_bits(bits, c=code)
-    if len(ldpc_bits) % 2 == 1:
-        ldpc_bits = np.concatenate([ldpc_bits, np.array([0], dtype=np.uint8)])
-    qpsk = QPSK_mapping(ldpc_bits.reshape(-1, 2))
-
-    # ── OFDM modulate ──
-    data_wf = OFDM_modulate_data(qpsk, N_FFT, CP_LEN,
-                                 data_start=DATA_START, data_tail=DATA_TAIL)
-
-    # ── Assemble ──
-    tx = np.concatenate([chirp_front, tx_preamble, data_wf, chirp_tail])
-    tx /= np.max(np.abs(tx))
-
-    return tx, pilots_fd, {
-        "pilot_mode": pilot_mode, "scrambler": use_scrambler,
-        "scrambler_seed": scrambler_seed, "Z": Z, "rate": rate,
-        "K": K, "Ncw": Ncw, "file_type": file_type,
-        "payload_bits": int(len(bits) - 64), "tx_len": len(tx)
-    }
-
-
 def fname_from_meta(meta: dict) -> str:
     scram = f"scr{meta['scrambler_seed']}" if meta['scrambler'] else "noscr"
-    return (f"tx_N{N_FFT}_cp{CP_LEN}_S8{meta['pilot_mode']}"
+    return (f"tx_N{meta['N']}_cp{meta['cp_len']}_S8{meta['pilot_mode']}"
             f"_R{meta['rate'].replace('/','-')}_Z{meta['Z']}_{scram}.npy")
 
 
 # ── Test configs ──
 TESTS = [
-    ("S8standard, no scrambler, Z=81", "standard", False, 0, 81),
-    ("S8same, no scrambler, Z=81",     "same",     False, 0, 81),
-    ("S8diff, no scrambler, Z=81",     "different",False, 0, 81),
-    ("S8standard, no scrambler, Z=27", "standard", False, 0, 27),
-    ("S8same, random scr=256, Z=81",    "same",     True, 256, 81),
+    ("S8standard, no scrambler, Z=81", "standard",  False, 0,  81),
+    ("S8same, no scrambler, Z=81",     "same",      False, 0,  81),
+    ("S8diff, no scrambler, Z=81",     "different", False, 0,  81),
+    ("S8standard, no scrambler, Z=27", "standard",  False, 0,  27),
+    ("S8same, random scr=256, Z=81",   "same",      True,  256,81),
 ]
 
 
@@ -176,26 +114,29 @@ def main():
         print(f"\n-- {desc} --")
         t0 = time.time()
 
-        # TX
-        tx_wf, pilots_fd, meta = build_tx(
-            INPUT_FILE, pilot_mode=pilot_mode, use_scrambler=use_scrambler,
-            scrambler_seed=scr_seed, Z=Z,
+        # TX — use the emitter module
+        tx_args = make_emitter_args(
+            pilot_mode=pilot_mode, use_scrambler=use_scrambler,
+            scrambler_seed=scr_seed, ldpc_z=Z,
         )
+        tx_wf, pilots_fd, meta = emitter(str(INPUT_FILE), tx_args)
         tx_time = time.time() - t0
+
         fname = fname_from_meta(meta)
         np.save(SAVE_DIR / fname, tx_wf)
         print(f"  TX: {len(tx_wf)} samples ({len(tx_wf)/FS:.1f}s) -> {fname}")
 
         # RX
         t0 = time.time()
-        args = make_args(use_scrambler=use_scrambler, scrambler_seed=scr_seed, ldpc_z=Z)
-        decoded, info = receiver(tx_wf.astype(np.float64), pilots_fd, args)
+        rx_args = make_receiver_args(
+            use_scrambler=use_scrambler, scrambler_seed=scr_seed, ldpc_z=Z,
+        )
+        decoded, info = receiver(tx_wf.astype(np.float64), pilots_fd, rx_args)
         rx_time = time.time() - t0
 
         # decoded is already payload (receiver strips 64-bit header)
         out_bytes = np.packbits(decoded.flatten()).tobytes()
         match = (out_bytes == original)
-        out_hash = hashlib.sha256(out_bytes).hexdigest()[:16]
 
         suffix = meta['file_type']
         out_path = OUTPUT_DIR / f"e2e_{fname.replace('.npy', '')}.{suffix}"
@@ -208,8 +149,7 @@ def main():
         print(f"  [{status}] tx={tx_time:.1f}s rx={rx_time:.1f}s -> {out_path.name}")
 
     print(f"\n{'='*60}")
-    print("Done. Generated waveforms in save/signal/, decoded outputs in output/ldpc/")
-    print(f"Original: {INPUT_FILE} ({len(original)}B)")
+    print("Done.")
 
 
 if __name__ == "__main__":

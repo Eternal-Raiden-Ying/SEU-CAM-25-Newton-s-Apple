@@ -279,6 +279,99 @@ def OFDM_modulate_data(
     return np.real(with_cp)
 
 
+def ofdm_modulate_symbol(symbol_freq: np.ndarray, cp_len: int = 1024) -> np.ndarray:
+    """IFFT + CP for a single OFDM symbol. Returns real time-domain."""
+    td = np.fft.ifft(symbol_freq)
+    return np.real(np.concatenate([td[-cp_len:], td]))
+
+
+def OFDM_modulate_data_with_comb(
+    symbols: np.ndarray,
+    N: int,
+    cp_len: int,
+    *,
+    iteration: int = 5,
+    seed: int = 128,
+    data_start: int = 204,
+    data_tail: int = 819,
+    fill_seed: int = 2025,
+):
+    """
+    OFDM modulate + insert comb pilot symbols (no pilot at the very start).
+    Guard band sizes match the receiver's data_start / data_tail DATA_BINS.
+
+    Returns:
+      with_cp_real: 1D real time-domain waveform
+      freq_with_pilot: 2D frequency-domain matrix (data + comb pilots)
+    """
+    from .batch import generate_pilot_symbol  # lazy import, no circular dep
+
+    pos_cnt = N // 2 - 1
+    data_bins = pos_cnt - data_start - data_tail
+    if data_bins <= 0:
+        raise ValueError(
+            f"data_bins <= 0 (pos_cnt={pos_cnt}, data_start={data_start}, data_tail={data_tail})"
+        )
+
+    n_sym = len(symbols) // data_bins
+    rem = len(symbols) % data_bins
+    if rem > 0:
+        pad = data_bins - rem
+        symbols = np.concatenate([
+            symbols,
+            QPSK_mapping(np.random.randint(0, 2, size=pad * 2).reshape(-1, 2)),
+        ])
+        n_sym += 1
+
+    if n_sym == 0:
+        return np.array([], dtype=float), np.zeros((0, N), dtype=complex)
+
+    data_matrix = symbols.reshape((n_sym, data_bins))
+    freq_data = np.zeros((n_sym, N), dtype=complex)
+
+    data_lo = 1 + data_start
+    data_hi = data_lo + data_bins
+    freq_data[:, data_lo:data_hi] = data_matrix
+
+    # Guard bands
+    rng = np.random.default_rng(fill_seed)
+    left_sz = data_lo - 1
+    right_sz = (N // 2 - 1) - (data_hi - 1)
+    if left_sz > 0:
+        freq_data[:, 1 : 1 + left_sz] = random_qpsk_matrix(n_sym, left_sz, rng)
+    if right_sz > 0:
+        freq_data[:, data_hi : 1 + pos_cnt] = random_qpsk_matrix(n_sym, right_sz, rng)
+
+    # Hermitian symmetry
+    freq_data[:, N // 2 + 1 :] = np.conj(freq_data[:, 1 : N // 2])[:, ::-1]
+
+    # Insert comb pilots
+    freq_with_pilot_list = []
+    pilot_counter = 0
+    i = 0
+    while i < n_sym:
+        for _ in range(iteration):
+            if i >= n_sym:
+                break
+            freq_with_pilot_list.append(freq_data[i])
+            i += 1
+        if i < n_sym:
+            freq_with_pilot_list.append(generate_pilot_symbol(N, seed + pilot_counter))
+            pilot_counter += 1
+
+    freq_with_pilot = np.vstack(freq_with_pilot_list)
+
+    # IFFT + CP
+    time_data = np.fft.ifft(freq_with_pilot, axis=1)
+    cp = time_data[:, -cp_len:]
+    with_cp = np.hstack([cp, time_data]).flatten()
+    with_cp = np.real(with_cp)
+    max_abs = np.max(np.abs(with_cp))
+    if max_abs > 0:
+        with_cp = with_cp / max_abs
+    return with_cp, freq_with_pilot
+
+
 if __name__ == "__main__":
     # unit test
     test_arr = np.array([[[0,0],[0,1]],

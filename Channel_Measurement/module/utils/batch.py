@@ -77,6 +77,18 @@ def generate_comb_pilot_symbol(N: int, seed: int) -> np.ndarray:
     """Alias for generate_pilot_symbol — kept for backward compatibility."""
     return generate_pilot_symbol(N, seed)
 
+
+def generate_pilot_combed_symbol(
+    N: int,
+    seed: int = 256,
+    iterations: int = 10,
+    num_of_data_symbols: int = 50,
+    block_size: int = 4,
+) -> np.ndarray:
+    """Generate concatenated comb pilot sequence (1D) for OFDM_modulate_data_with_comb."""
+    n_pilots = int(np.ceil(num_of_data_symbols / iterations)) * block_size
+    return np.concatenate([generate_pilot_symbol(N, seed + i) for i in range(n_pilots)])
+
 # ========= H(f) 估计 / 外推 =========
 def evaluate_H_f(symbols_td: np.ndarray,
                  pilots_fd: np.ndarray | None,
